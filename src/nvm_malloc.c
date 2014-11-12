@@ -212,7 +212,7 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
         sfence();
     } else {
         nvm_block = (nvm_block_header_t*) ((uintptr_t)ptr & ~(BLOCK_SIZE-1));
-        if (GET_USAGE(nvm_block->state) == USAGE_BLOCK) {
+        if (GET_USAGE(nvm_block->state) == USAGE_FREE) {
             /* large block */
 
             /* store link pointers in header */

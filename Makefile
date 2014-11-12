@@ -20,7 +20,7 @@ $(OBJDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 ulib-svn/lib/libulib.a:
-	cd ulib-svn; make;
+	cd ulib-svn; make release
 
 clean:
 	@rm -f $(LIBNAME)

@@ -412,6 +412,9 @@ void nvm_initialize_empty() {
     nvm_block_header_t *block_hdr=NULL;
     arena_t *arena=NULL;
 
+    /* perform initialization for chunks when not recovering */
+    initialize_chunks();
+
     /* allocate chunks for the initial arena setup */
     activate_more_chunks(INITIAL_ARENAS);
 

@@ -7,10 +7,10 @@
 
 void* initalize_nvm_space(const char *workspace_path, uint64_t max_num_chunks);
 
+void initialize_chunks();
+
 uint64_t recover_chunks();
 
 void* activate_more_chunks(uint64_t n_chunks);
-
-void cleanup_chunks();
 
 #endif /* CHUNK_H_ */

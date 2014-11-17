@@ -85,6 +85,7 @@ void arena_init(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk, in
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         nvm_block->n_pages = CHUNK_SIZE / BLOCK_SIZE - 1;
         nvm_block->vdata = node;
+        nvm_block->arena_id = arena->id;
         clflush(nvm_block);
     }
 }
@@ -406,6 +407,7 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
         nvm_run->n_bytes = n_bytes;
         nvm_run->vdata = run;
+        nvm_run->arena_id = arena->id;
         clflush(nvm_run);
         sfence();
 
@@ -430,7 +432,8 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         // TODO: check that this is failure safe
         memset(nvm_run, 0, sizeof(nvm_run_header_t));
         nvm_run->vdata = run;
-        //memset(nvm_run->bitmap, 0, 8);
+        memset(nvm_run->bitmap, 0, 8);
+        nvm_run->arena_id = arena->id;
         sfence();
         nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
         nvm_run->n_bytes = n_bytes;
@@ -471,6 +474,7 @@ arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         nvm_block->vdata = block;
         nvm_block->n_pages = n_pages;
+        nvm_block->arena_id = arena->id;
         clflush(nvm_block);
         sfence();
 

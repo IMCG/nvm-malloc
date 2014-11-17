@@ -116,7 +116,8 @@ struct nvm_block_header_s {
     uint32_t n_pages;
     arena_block_t *vdata;
     nvm_ptrset_t on[2];
-    char __padding[16];
+    uint32_t arena_id;
+    char __padding[12];
 } __attribute__((aligned(CACHE_LINE_SIZE)));
 
 struct nvm_run_header_s {
@@ -126,7 +127,7 @@ struct nvm_run_header_s {
     nvm_ptrset_t on[2];
     char bitmap[8];
     int16_t bit_idx;
-    char __padding[6];
+    uint32_t arena_id;
 } __attribute__((aligned(CACHE_LINE_SIZE)));
 
 

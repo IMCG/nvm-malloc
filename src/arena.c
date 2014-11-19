@@ -16,6 +16,7 @@
 #define NVM_REL_TO_ABS(base, ptr) (void*)((uintptr_t)base + (uintptr_t)ptr)
 
 extern void *nvm_start;
+extern arena_t **arenas;
 
 arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes);
 arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages);
@@ -84,7 +85,6 @@ void arena_init(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk, in
         // TODO: this is not fully failure atomic...
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         nvm_block->n_pages = CHUNK_SIZE / BLOCK_SIZE - 1;
-        nvm_block->vdata = node;
         nvm_block->arena_id = arena->id;
         clflush(nvm_block);
     }
@@ -165,7 +165,6 @@ void arena_recover(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk)
                 block->nvm_block = nvm_block;
                 block->n_pages = nvm_block->n_pages;
                 block->arena = arena;
-                nvm_block->vdata = block;
 
                 /* finish iteration */
                 nvm_block = (nvm_block_header_t*) ((uintptr_t)nvm_block + block->n_pages * BLOCK_SIZE);
@@ -180,7 +179,6 @@ void arena_recover(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk)
                 block->nvm_block = nvm_block;
                 block->n_pages = nvm_block->n_pages;
                 block->arena = arena;
-                nvm_block->vdata = block;
                 nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
 
                 /* register in arenas free list */
@@ -226,7 +224,7 @@ void* arena_allocate(arena_t *arena, uint32_t n_bytes) {
             bin->current_run = run;
             bin->n_free += (BLOCK_SIZE-64)/n_bytes;
             bin->n_runs += 1;
-        } else if (bin->current_run->n_free == 0) {
+        } else if (!bin->current_run || bin->current_run->n_free == 0) {
             /* current run is full but not bin, select another non-full one */
             run = bin->runs;
             bin->runs = run->next;
@@ -247,6 +245,18 @@ void* arena_allocate(arena_t *arena, uint32_t n_bytes) {
         run->n_free -= 1;
         bin->n_free -= 1;
 
+        if (run->n_free == 0) {
+            run->nvm_run->vdata = NULL;
+            free(run);
+            if (bin->n_free > 0) {
+                run = bin->runs;
+                bin->runs = run->next;
+                bin->current_run = run;
+            } else {
+                bin->current_run = NULL;
+            }
+        }
+
         pthread_mutex_unlock(&bin->mtx);
     } else {
         /* large request, round up to the nearest multiple of BLOCK_SIZE */
@@ -255,6 +265,7 @@ void* arena_allocate(arena_t *arena, uint32_t n_bytes) {
             return NULL;
         }
         result = (void*) (block->nvm_block + 1);
+        free(block);
     }
 
     return result;
@@ -274,7 +285,10 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
 
     if (GET_USAGE(nvm_block->state) == USAGE_BLOCK) {
         /* freeing a large element */
-        block = nvm_block->vdata;
+        block = (arena_block_t*) malloc(sizeof(arena_block_t));
+        block->nvm_block = nvm_block;
+        block->n_pages = nvm_block->n_pages;
+        block->arena = arenas[nvm_block->arena_id];
         arena = block->arena;
 
         /* store link pointers in header */
@@ -315,7 +329,22 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
     } else if (GET_USAGE(nvm_block->state) == USAGE_RUN) {
         /* freeing a small element */
         nvm_run = (nvm_run_header_t*) nvm_block;
-        run = nvm_run->vdata;
+        if (nvm_run->vdata == NULL) {
+            /* run was full so we need to recreate the VHeader */
+            arena = arenas[nvm_run->arena_id];
+            run = (arena_run_t*) malloc(sizeof(arena_run_t));
+            memset(run->bitmap, 0, sizeof(run->bitmap));
+            run->nvm_run = nvm_run;
+            run->bin = &arena->bins[nvm_run->n_bytes/64 - 1];
+            run->elem_size = nvm_run->n_bytes;
+            run->n_free = 0;
+            run->n_max = (BLOCK_SIZE-64) / run->elem_size;
+            run->next = NULL;
+            nvm_run->vdata = run;
+        } else {
+            /* run was nonfull, can reuse existing VHeader */
+            run = nvm_run->vdata;
+        }
         bin = run->bin;
         run_idx = ((uintptr_t)ptr - (uintptr_t)(nvm_run+1)) / run->elem_size;
 
@@ -472,7 +501,6 @@ arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
         block->arena = arena;
         nvm_block = block->nvm_block;
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
-        nvm_block->vdata = block;
         nvm_block->n_pages = n_pages;
         nvm_block->arena_id = arena->id;
         clflush(nvm_block);
@@ -524,9 +552,7 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
 
     /* link chunk by registering it in the previous one */
     last_chunk = arena->chunk_ptrs[arena->n_chunks-1];
-    //mprotect(last_chunk, BLOCK_SIZE, PROT_READ | PROT_WRITE);
     last_chunk->next_arena_chunk = NVM_ABS_TO_REL(nvm_start, chunk);
-    //mprotect(last_chunk, BLOCK_SIZE, PROT_READ);
     clflush(arena->chunk_ptrs[arena->n_chunks-1]);
     sfence();
 
@@ -539,7 +565,6 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
     nvm_block->state = USAGE_FREE | STATE_INITIALIZED; /* no need to worry, as long as chunk header is still in INITIALIZING */
     nvm_block->n_pages = CHUNK_SIZE / BLOCK_SIZE - 1;
-    nvm_block->vdata = free_block;
     clflush(nvm_block);
     sfence();
 
@@ -552,9 +577,6 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     if (arena->n_chunks % 50 == 0) {
         arena->chunk_ptrs = (nvm_chunk_header_t**) realloc(arena->chunk_ptrs, sizeof(nvm_chunk_header_t**)*(arena->n_chunks + 50));
     }
-
-    // TODO REMOVE
-    //mprotect(chunk, BLOCK_SIZE, PROT_READ);
 
     return free_block;
 }

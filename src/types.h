@@ -106,7 +106,6 @@ struct nvm_ptrset_s {
 struct nvm_huge_header_s {
     char state;
     uint32_t n_chunks;
-    huge_t *vdata;
     nvm_ptrset_t on[2];
     char __padding[12];
 } __attribute__((aligned(CACHE_LINE_SIZE)));
@@ -114,7 +113,6 @@ struct nvm_huge_header_s {
 struct nvm_block_header_s {
     char state;
     uint32_t n_pages;
-    arena_block_t *vdata;
     nvm_ptrset_t on[2];
     uint32_t arena_id;
     char __padding[12];

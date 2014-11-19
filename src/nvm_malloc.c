@@ -20,7 +20,7 @@
 
 void nvm_initialize_empty();
 void nvm_initialize_recovered(uint64_t n_chunks_recovered);
-huge_t* nvm_reserve_huge(uint64_t n_chunks);
+nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks);
 
 /* comparison function for a the free chunk tree - sort by number of chunks */
 int chunk_node_compare(const void *_a, const void *_b) {
@@ -61,7 +61,7 @@ DEFINE_CHAINHASH(tmap,
                  chainhash_hashfn,
                  chainhash_equalfn,
                  chainhash_cmpfn);
-static arena_t **arenas;
+arena_t **arenas=NULL;
 static uint32_t next_arena=0;
 static chainhash_t(tmap) *tidmap = NULL;
 
@@ -90,8 +90,8 @@ void* nvm_initialize(const char *workspace_path, int recover_if_possible) {
 void* nvm_reserve(uint64_t n_bytes) {
     void *mem = NULL;
     arena_t *arena = NULL;
-    huge_t *huge = NULL, *huge_free = NULL;
-    nvm_huge_header_t *nvm_huge=NULL, *nvm_huge_free=NULL;
+    huge_t *huge = NULL;
+    nvm_huge_header_t *nvm_huge=NULL;
     pid_t tid;
     uint64_t n_chunks, next_arena_num;
 
@@ -119,32 +119,28 @@ void* nvm_reserve(uint64_t n_bytes) {
 
         if (huge == NULL) {
             pthread_mutex_unlock(&chunk_mtx);
-            huge = nvm_reserve_huge(n_chunks);
-            nvm_huge = huge->nvm_chunk;
+            nvm_huge = nvm_reserve_huge(n_chunks);
         } else {
             tree_del(&huge->link, &free_chunks);
             pthread_mutex_unlock(&chunk_mtx);
-            nvm_huge = huge->nvm_chunk;
 
             if (huge->n_chunks > n_chunks) {
                 /* got too many chunks, split and insert rest */
-                huge_free = (huge_t*) malloc(sizeof(huge_t));
-
-                nvm_huge_free = (nvm_huge_header_t*) ((uintptr_t)nvm_huge + n_chunks*CHUNK_SIZE);
-                nvm_huge_free->state = USAGE_FREE | STATE_INITIALIZED;
-                nvm_huge_free->vdata = huge_free;
-                nvm_huge_free->n_chunks = huge->n_chunks - n_chunks;
-                clflush(nvm_huge_free);
+                nvm_huge = (nvm_huge_header_t*) ((uintptr_t)huge->nvm_chunk + (huge->n_chunks - n_chunks)*CHUNK_SIZE);
+                nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
+                nvm_huge->n_chunks = n_chunks;
+                clflush(nvm_huge);
                 sfence();
 
-                huge_free->nvm_chunk = nvm_huge_free;
-                huge_free->n_chunks = huge->n_chunks - n_chunks;
+                huge->nvm_chunk->n_chunks -= n_chunks;
+                huge->n_chunks -= n_chunks;
+
                 pthread_mutex_lock(&chunk_mtx);
                 tree_add(&huge->link, chunk_node_compare, &free_chunks);
                 pthread_mutex_unlock(&chunk_mtx);
-
-                huge->n_chunks = n_chunks;
-                nvm_huge->n_chunks = n_chunks;
+            } else {
+                nvm_huge = huge->nvm_chunk;
+                free(huge);
             }
         }
         mem = (void*) (nvm_huge+1);
@@ -329,8 +325,10 @@ void nvm_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, void
 
     if (rel_ptr % CHUNK_SIZE == sizeof(nvm_huge_header_t)) {
         /* ptr is 64 bytes into a chunk --> huge block */
-        nvm_huge = (nvm_huge_header_t*) (rel_ptr - sizeof(nvm_huge_header_t));
-        huge = nvm_huge->vdata;
+        nvm_huge = (nvm_huge_header_t*) (ptr - sizeof(nvm_huge_header_t));
+        huge = (huge_t*) malloc(sizeof(huge_t));
+        huge->nvm_chunk = nvm_huge;
+        huge->n_chunks = nvm_huge->n_chunks;
 
         /* store link pointers in header */
         if (link_ptr1) {
@@ -483,8 +481,6 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
             huge->nvm_chunk = nvm_huge;
             huge->n_chunks = nvm_huge->n_chunks;
 
-            nvm_huge->vdata = huge;
-
             if (GET_STATE(nvm_chunk->state) != STATE_INITIALIZED) {
                 // TODO: check if we can replay the allocation here?
                 tree_add(&huge->link, chunk_node_compare, &free_chunks);
@@ -498,24 +494,16 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
     }
 }
 
-huge_t* nvm_reserve_huge(uint64_t n_chunks) {
+nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks) {
     nvm_huge_header_t *nvm_huge = NULL;
-    huge_t *huge = NULL;
 
     /* create new chunks for the request */
     nvm_huge = activate_more_chunks(n_chunks);
-
-    /* initialize the header structures */
-    huge = (huge_t*) malloc(sizeof(huge_t));
-    huge->nvm_chunk = nvm_huge;
-    huge->n_chunks = n_chunks;
-
     nvm_huge->state = USAGE_HUGE | STATE_INITIALIZING;
     nvm_huge->n_chunks = n_chunks;
-    nvm_huge->vdata = huge;
-    memset(nvm_huge->on, 0, 44);
+    memset(nvm_huge->on, 0, sizeof(nvm_huge->on));
     clflush(nvm_huge);
     sfence();
 
-    return huge;
+    return nvm_huge;
 }

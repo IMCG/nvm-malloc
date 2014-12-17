@@ -17,10 +17,12 @@
 
 extern void *nvm_start;
 extern arena_t **arenas;
+extern uint64_t current_version;
 
 arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes);
-arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages);
+nvm_block_header_t* arena_create_block(arena_t *arena, uint32_t n_pages);
 arena_block_t* arena_add_chunk(arena_t *arena);
+inline arena_run_t* arena_create_run_header(nvm_run_header_t *nvm_run);
 
 /* comparison function for a bin's run tree - sort by address on NVM */
 int run_node_compare(const void *_a, const void *_b) {
@@ -202,7 +204,7 @@ void* arena_allocate(arena_t *arena, uint32_t n_bytes) {
     char mask;
     arena_bin_t *bin = NULL;
     arena_run_t *run = NULL;
-    arena_block_t *block = NULL;
+    nvm_block_header_t *nvm_block = NULL;
     void *result = NULL;
 
     assert(n_bytes <= SCLASS_LARGE_MAX);
@@ -245,27 +247,14 @@ void* arena_allocate(arena_t *arena, uint32_t n_bytes) {
         run->n_free -= 1;
         bin->n_free -= 1;
 
-        if (run->n_free == 0) {
-            run->nvm_run->vdata = NULL;
-            free(run);
-            if (bin->n_free > 0) {
-                run = bin->runs;
-                bin->runs = run->next;
-                bin->current_run = run;
-            } else {
-                bin->current_run = NULL;
-            }
-        }
-
         pthread_mutex_unlock(&bin->mtx);
     } else {
         /* large request, round up to the nearest multiple of BLOCK_SIZE */
         n_bytes = (n_bytes & ~4095) + (n_bytes % BLOCK_SIZE != 0 ? BLOCK_SIZE : 0);
-        if ((block = arena_create_block(arena, n_bytes/BLOCK_SIZE)) == NULL) {
+        if ((nvm_block = arena_create_block(arena, n_bytes/BLOCK_SIZE)) == NULL) {
             return NULL;
         }
-        result = (void*) (block->nvm_block + 1);
-        free(block);
+        result = (void*) (nvm_block + 1);
     }
 
     return result;
@@ -275,7 +264,7 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
     arena_t *arena = NULL;
     arena_block_t *block = NULL;
     arena_bin_t *bin = NULL;
-    arena_run_t *run = NULL;
+    arena_run_t *run = NULL, *tmp_run = NULL;
     nvm_block_header_t *nvm_block = NULL;
     nvm_run_header_t *nvm_run = NULL;
     int run_idx;
@@ -329,22 +318,25 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
     } else if (GET_USAGE(nvm_block->state) == USAGE_RUN) {
         /* freeing a small element */
         nvm_run = (nvm_run_header_t*) nvm_block;
-        if (nvm_run->vdata == NULL) {
-            /* run was full so we need to recreate the VHeader */
-            arena = arenas[nvm_run->arena_id];
-            run = (arena_run_t*) malloc(sizeof(arena_run_t));
-            memset(run->bitmap, 0, sizeof(run->bitmap));
-            run->nvm_run = nvm_run;
-            run->bin = &arena->bins[nvm_run->n_bytes/64 - 1];
-            run->elem_size = nvm_run->n_bytes;
-            run->n_free = 0;
-            run->n_max = (BLOCK_SIZE-64) / run->elem_size;
-            run->next = NULL;
-            nvm_run->vdata = run;
-        } else {
-            /* run was nonfull, can reuse existing VHeader */
+
+        /* check if we need to create a VHeader */
+        run = nvm_run->vdata;
+        if (nvm_run->version < current_version) {
+            printf("nvm_run->version < current_version!\n");
+            tmp_run = arena_create_run_header(nvm_run);
+            pthread_mutex_lock(&tmp_run->bin->mtx);
+            /* after locking, make sure nobody else has created a VHeader yet */
+            if (run == nvm_run->vdata) {
+                nvm_run->vdata = tmp_run;
+                sfence(); /* need to guarantee that vdata is set before version */
+                nvm_run->version = current_version;
+            } else {
+                free(tmp_run);
+            }
+            pthread_mutex_unlock(&tmp_run->bin->mtx);
             run = nvm_run->vdata;
         }
+
         bin = run->bin;
         run_idx = ((uintptr_t)ptr - (uintptr_t)(nvm_run+1)) / run->elem_size;
 
@@ -390,7 +382,6 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
         bin->n_free += 1;
         /* if run was full, add it back to bin's free list */
         if (run != bin->current_run && run->n_free == 1) {
-            //tree_add(&run->link, run_node_compare, &bin->runs);
             run->next = bin->runs;
             bin->runs = run;
         }
@@ -437,6 +428,7 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         nvm_run->n_bytes = n_bytes;
         nvm_run->vdata = run;
         nvm_run->arena_id = arena->id;
+        nvm_run->version = current_version;
         clflush(nvm_run);
         sfence();
 
@@ -463,6 +455,7 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         nvm_run->vdata = run;
         memset(nvm_run->bitmap, 0, 8);
         nvm_run->arena_id = arena->id;
+        nvm_run->version = current_version;
         sfence();
         nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
         nvm_run->n_bytes = n_bytes;
@@ -475,10 +468,9 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
     return run;
 }
 
-arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
+nvm_block_header_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
     nvm_block_header_t *nvm_block = NULL;
     arena_block_t *free_block = NULL;
-    arena_block_t *block = NULL;
 
     /* what comes next should be protected */
     pthread_mutex_lock(&arena->mtx);
@@ -495,11 +487,7 @@ arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
 
     if (free_block->n_pages > n_pages) {
         /* create volatile and nonvolatile block objects at the end of the free block */
-        block = (arena_block_t*) malloc(sizeof(arena_block_t));
-        block->nvm_block = (nvm_block_header_t*) ((uintptr_t)free_block->nvm_block + (free_block->n_pages - n_pages) * BLOCK_SIZE);
-        block->n_pages = n_pages;
-        block->arena = arena;
-        nvm_block = block->nvm_block;
+        nvm_block = (nvm_block_header_t*) ((uintptr_t)free_block->nvm_block + (free_block->n_pages - n_pages) * BLOCK_SIZE);
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         nvm_block->n_pages = n_pages;
         nvm_block->arena_id = arena->id;
@@ -519,15 +507,10 @@ arena_block_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
     } else {
         /* block is the size we want, lock can be released right away in this case */
         pthread_mutex_unlock(&arena->mtx);
-
-        block = free_block;
-        //nvm_block = block->nvm_block;
-        //nvm_block->state = USAGE_BLOCK | STATE_INITIALIZING;
-        //clflush(nvm_block);
-        sfence();
+        nvm_block = free_block->nvm_block;
     }
 
-    return block;
+    return nvm_block;
 }
 
 arena_block_t* arena_add_chunk(arena_t *arena) {
@@ -579,4 +562,19 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     }
 
     return free_block;
+}
+
+inline arena_run_t* arena_create_run_header(nvm_run_header_t *nvm_run) {
+    arena_t *arena = arenas[nvm_run->arena_id];
+    arena_run_t *run = (arena_run_t*) malloc(sizeof(arena_run_t));
+
+    memset(run->bitmap, 0, sizeof(run->bitmap));
+    run->nvm_run = nvm_run;
+    run->bin = &arena->bins[nvm_run->n_bytes/64 - 1];
+    run->elem_size = nvm_run->n_bytes;
+    run->n_free = 0;
+    run->n_max = (BLOCK_SIZE-64) / run->elem_size;
+    run->next = NULL;
+
+    return run;
 }

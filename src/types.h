@@ -120,12 +120,13 @@ struct nvm_block_header_s {
 
 struct nvm_run_header_s {
     char state;
-    uint32_t n_bytes;
+    uint16_t n_bytes;
     arena_run_t *vdata;
     nvm_ptrset_t on[2];
     char bitmap[8];
     int16_t bit_idx;
-    uint32_t arena_id;
+    uint16_t arena_id;
+    uint32_t version;
 } __attribute__((aligned(CACHE_LINE_SIZE)));
 
 

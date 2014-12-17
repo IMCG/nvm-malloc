@@ -32,13 +32,13 @@ inline void error_and_exit(char *msg, ...) {
 }
 
 static void            *chunk_region_start = NULL;
+       void            *meta_info = NULL;
 static uint64_t        max_chunks = 0;
-//static int             *chunk_fds = NULL;
 static int             backing_file_fd = -1;
 static char            *backing_file_path = NULL;
+static int             meta_file_fd = -1;
+static char            *meta_file_path = NULL;
 static uint64_t        next_chunk = 0;
-//static char            *next_file_path = NULL;
-//static int32_t         base_path_length = 0;
 static pthread_mutex_t chunk_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 inline int open_existing_file(char *path) {
@@ -83,7 +83,9 @@ void* initalize_nvm_space(const char *workspace_path, uint64_t max_num_chunks) {
 
     base_path_length = strlen(workspace_path);
     backing_file_path = (char*) malloc(base_path_length + 1 + 7 + 1); /* <workspace_path> + '/' + 'backing' + '\0' */
+    meta_file_path    = (char*) malloc(base_path_length + 1 + 4 + 1); /* <workspace_path> + '/' + 'meta' + '\0' */
     sprintf(backing_file_path, "%s/backing", workspace_path);
+    sprintf(meta_file_path, "%s/meta", workspace_path);
 
     return chunk_region_start;
 }
@@ -94,6 +96,13 @@ void initialize_chunks() {
     if (posix_fallocate(backing_file_fd, 0, 1024*1024) != 0)
         error_and_exit("unable to ensure file size of %s", backing_file_path);
     /* <<<< HACK end */
+
+    /* open new meta file */
+    meta_file_fd = open_empty_or_create_file(meta_file_path);
+    if (posix_fallocate(meta_file_fd, 0, BLOCK_SIZE) != 0)
+        error_and_exit("unable to ensure file size of %s", meta_file_path);
+    if ((meta_info = mmap(NULL, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_NORESERVE, meta_file_fd, 0)) == MAP_FAILED)
+        error_and_exit("error mapping meta info\n");
 }
 
 uint64_t recover_chunks() {
@@ -105,6 +114,11 @@ uint64_t recover_chunks() {
     if (mmap(next_chunk_addr, n_bytes, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_NORESERVE|MAP_FIXED, backing_file_fd, 0) == MAP_FAILED) {
         error_and_exit("unable to mmap %s\n", backing_file_path);
     }
+
+    /* open existing meta file */
+    meta_file_fd = open_existing_file(meta_file_path);
+    if ((meta_info = mmap(NULL, BLOCK_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_NORESERVE, meta_file_fd, 0)) == MAP_FAILED)
+        error_and_exit("error mapping meta info\n");
 
     return next_chunk;
 }

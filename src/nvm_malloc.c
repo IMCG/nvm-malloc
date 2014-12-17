@@ -49,6 +49,10 @@ static huge_t* tree_upper_bound(uint32_t req_chunks, struct tree_root *root) {
 /* start of mapped NVM space */
 void *nvm_start = NULL;
 
+/* meta information */
+extern void *meta_info;
+uint64_t current_version = 0;
+
 /* global free chunk tree */
 node_t *free_chunks = NULL;
 pthread_mutex_t chunk_mtx = PTHREAD_MUTEX_INITIALIZER;
@@ -79,6 +83,9 @@ void* nvm_initialize(const char *workspace_path, int recover_if_possible) {
         ot_init(nvm_start);
     } else {
         /* chunks were recovered, perform cleanup and consistency check */
+        current_version = (*(uint64_t*) meta_info)++;
+        clflush(meta_info);
+        sfence();
         nvm_initialize_recovered(n_chunks_recovered);
         ot_init(nvm_start);
         ot_recover();
@@ -412,6 +419,10 @@ void nvm_initialize_empty() {
 
     /* perform initialization for chunks when not recovering */
     initialize_chunks();
+    *(uint64_t*) meta_info = 1;
+    clflush(meta_info);
+    sfence();
+    current_version = 0;
 
     /* allocate chunks for the initial arena setup */
     activate_more_chunks(INITIAL_ARENAS);

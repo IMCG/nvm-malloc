@@ -67,7 +67,7 @@ inline int open_empty_or_create_file(char *path) {
 inline uint64_t get_file_size(char *path) {
     struct stat stbuf;
     if (stat(path, &stbuf) != 0) {
-        error_and_exit("unable to get file info for %s\n", path);
+        return 0;
     }
     return (uint64_t) stbuf.st_size;
 }
@@ -99,8 +99,11 @@ void initialize_chunks() {
 uint64_t recover_chunks() {
     void *next_chunk_addr = (void*) ((char*)chunk_region_start + next_chunk*CHUNK_SIZE);
     uint64_t n_bytes = get_file_size(backing_file_path);
-    next_chunk = n_bytes / CHUNK_SIZE;
+    if (n_bytes == 0) {
+        return 0;
+    }
 
+    next_chunk = n_bytes / CHUNK_SIZE;
     backing_file_fd = open_existing_file(backing_file_path);
     if (mmap(next_chunk_addr, n_bytes, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_NORESERVE|MAP_FIXED, backing_file_fd, 0) == MAP_FAILED) {
         error_and_exit("unable to mmap %s\n", backing_file_path);

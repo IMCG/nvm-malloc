@@ -319,6 +319,9 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
         /* freeing a small element */
         nvm_run = (nvm_run_header_t*) nvm_block;
 
+        /* make sure no concurrent deallocations/activations are performed on the same run */
+        while (!__sync_bool_compare_and_swap(&nvm_run->state, (USAGE_RUN | STATE_INITIALIZED), (USAGE_RUN | STATE_PREFREE))) {}
+
         /* check if we need to create a VHeader */
         run = nvm_run->vdata;
         if (nvm_run->version < current_version) {

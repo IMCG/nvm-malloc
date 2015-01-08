@@ -47,8 +47,10 @@
 #define STATE_NONE         ((char)0)
 #define STATE_INITIALIZING ((char)1)
 #define STATE_INITIALIZED  ((char)2)
-#define STATE_FREEING      ((char)3)
-#define STATE_ACTIVATING   ((char)4)
+#define STATE_PREFREE      ((char)4)
+#define STATE_FREEING      ((char)5)
+#define STATE_PREACTIVATE  ((char)6)
+#define STATE_ACTIVATING   ((char)7)
 
 #define USAGE_MASK         (~STATE_MASK)
 #define GET_USAGE(state)   (state & USAGE_MASK)

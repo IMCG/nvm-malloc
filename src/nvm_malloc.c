@@ -21,6 +21,7 @@
 void nvm_initialize_empty();
 void nvm_initialize_recovered(uint64_t n_chunks_recovered);
 nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks);
+void log_activate(void *ptr);
 
 /* comparison function for a the free chunk tree - sort by number of chunks */
 int chunk_node_compare(const void *_a, const void *_b) {
@@ -52,6 +53,9 @@ void *nvm_start = NULL;
 /* meta information */
 extern void *meta_info;
 uint64_t current_version = 0;
+uint64_t next_log_entry = 0;
+uint64_t max_log_entries = 127;
+uintptr_t *log_start = (uintptr_t*) NULL;
 
 /* global free chunk tree */
 node_t *free_chunks = NULL;
@@ -90,6 +94,8 @@ void* nvm_initialize(const char *workspace_path, int recover_if_possible) {
         ot_init(nvm_start);
         ot_recover();
     }
+
+    log_start = (uintptr_t*)meta_info + 1;
 
     return nvm_start;
 }
@@ -180,6 +186,8 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
     uintptr_t rel_ptr = __NVM_ABS_TO_REL(ptr);
     uint16_t run_idx;
 
+    log_activate(ptr);
+
     /* determine whether we are activating a small, large or huge object */
     if (rel_ptr % CHUNK_SIZE == sizeof(nvm_huge_header_t)) {
         /* ptr is 64 bytes into a chunk --> huge block */
@@ -250,6 +258,9 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
             /* small block */
             nvm_run = (nvm_run_header_t*) nvm_block;
             run_idx = ((uintptr_t)ptr - (uintptr_t)(nvm_run+1)) / nvm_run->n_bytes;
+
+            /* make sure no concurrent activations are performed on the same run */
+            while (!__sync_bool_compare_and_swap(&nvm_run->state, (USAGE_RUN | STATE_INITIALIZED), (USAGE_RUN | STATE_PREACTIVATE))) {}
 
             /* save the bit to be changed */
             nvm_run->bit_idx = run_idx;
@@ -517,4 +528,12 @@ nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks) {
     sfence();
 
     return nvm_huge;
+}
+
+void log_activate(void *ptr) {
+    uint64_t slot_index = __sync_fetch_and_add(&next_log_entry, 1);
+    uintptr_t *slot = log_start + (slot_index % max_log_entries);
+    *slot = __NVM_ABS_TO_REL(ptr);
+    clflush(slot);
+    sfence();
 }

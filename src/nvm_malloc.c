@@ -329,7 +329,7 @@ void nvm_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, void
 
     if (rel_ptr % CHUNK_SIZE == sizeof(nvm_huge_header_t)) {
         /* ptr is 64 bytes into a chunk --> huge block */
-        nvm_huge = (nvm_huge_header_t*) (rel_ptr - sizeof(nvm_huge_header_t));
+        nvm_huge = (nvm_huge_header_t*) (ptr - sizeof(nvm_huge_header_t));
         huge = nvm_huge->vdata;
 
         /* store link pointers in header */

@@ -8,6 +8,8 @@
 #include <stdlib.h>
 
 inline uint64_t round_up(uint64_t num, uint64_t multiple);
+inline char identify_usage(void *ptr);
+
 inline void clflush(const void *ptr);
 inline void clflush_range(const void *ptr, uint64_t len);
 inline void sfence();

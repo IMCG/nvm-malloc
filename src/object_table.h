@@ -11,7 +11,7 @@
 
 void ot_init(void *nvm_start);
 
-void ot_recover();
+void ot_recover(void *nvm_start);
 
 int ot_insert(const char *id, void *data_ptr);
 

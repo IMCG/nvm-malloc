@@ -19,7 +19,7 @@ uint64_t round_up(uint64_t num, uint64_t multiple) {
 char identify_usage(void *ptr) {
     /* find out if ptr points to a small, large or huge region */
     nvm_block_header_t *nvm_block = NULL;
-    void *rel_ptr = (void*) ((uintptr_t)ptr - (uintptr_t)nvm_start);
+    uintptr_t rel_ptr = (uintptr_t)ptr - (uintptr_t)nvm_start;
     if (rel_ptr % CHUNK_SIZE == sizeof(nvm_huge_header_t)) {
         /* ptr is 64 bytes into a chunk, must be huge allocation */
         return USAGE_HUGE;

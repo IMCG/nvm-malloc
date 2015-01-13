@@ -20,6 +20,7 @@
 
 void nvm_initialize_empty();
 void nvm_initialize_recovered(uint64_t n_chunks_recovered);
+void* nvm_recovery_thread();
 nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks);
 void log_activate(void *ptr);
 
@@ -84,18 +85,18 @@ void* nvm_initialize(const char *workspace_path, int recover_if_possible) {
     if (!recover_if_possible || (n_chunks_recovered = recover_chunks()) == 0) {
         /* no chunks were recovered, this is a fresh start so initialize */
         nvm_initialize_empty();
+        log_start = (uintptr_t*)meta_info + 1;
         ot_init(nvm_start);
     } else {
         /* chunks were recovered, perform cleanup and consistency check */
         current_version = (*(uint64_t*) meta_info)++;
         clflush(meta_info);
         sfence();
+        log_start = (uintptr_t*)meta_info + 1;
         nvm_initialize_recovered(n_chunks_recovered);
         ot_init(nvm_start);
-        ot_recover();
+        ot_recover(nvm_start);
     }
-
-    log_start = (uintptr_t*)meta_info + 1;
 
     return nvm_start;
 }
@@ -310,10 +311,13 @@ void nvm_activate_id(const char *id) {
     nvm_ot_entry = ot_entry->nvm_entry;
 
     /* step 1 - persist id in INITIALIZING state */
-    nvm_ot_entry->state = STATE_INITIALIZING;
+    nvm_ot_entry->state = STATE_NONE;
+    sfence();
     strncpy(nvm_ot_entry->id, id, MAX_ID_LENGTH);
     nvm_ot_entry->id[54] = '\0';
     nvm_ot_entry->ptr = __NVM_ABS_TO_REL(ot_entry->data_ptr);
+    sfence();
+    nvm_ot_entry->state = STATE_INITIALIZING;
     clflush(nvm_ot_entry);
     sfence();
 
@@ -474,46 +478,284 @@ void nvm_initialize_empty() {
     }
 }
 
+void* nvm_recovery_thread(void *chunk_count) {
+    nvm_chunk_header_t *nvm_chunk = NULL;
+    nvm_huge_header_t *nvm_huge = NULL;
+    nvm_block_header_t *nvm_block = NULL;
+    nvm_run_header_t *nvm_run = NULL;
+    arena_block_t *block = NULL;
+    arena_run_t *run = NULL, *tmp_run = NULL;
+    char usage = 0;
+    uint64_t n_chunks = (uint64_t) chunk_count, i = 0, j = 0;
+
+    while (i < n_chunks) {
+        nvm_chunk = (nvm_chunk_header_t*) (nvm_start + i*CHUNK_SIZE);
+        if (GET_USAGE(nvm_chunk->state) == USAGE_ARENA) {
+            /* only process arena chunks since we're looking for runs */
+            j = 1;
+            while (j < CHUNK_SIZE/BLOCK_SIZE) {
+                nvm_block = (nvm_block_header_t*) ((uintptr_t)nvm_chunk + j*BLOCK_SIZE);
+                usage = GET_USAGE(nvm_block->state);
+                if (usage == USAGE_FREE) {
+                    /* free block, add to arenas fee pageruns tree */
+                    block = arena_create_block_header(nvm_block);
+                    pthread_mutex_lock(&block->arena->mtx);
+                    tree_add(&block->link, block_node_compare, &block->arena->free_pageruns);
+                    pthread_mutex_unlock(&block->arena->mtx);
+                } else if (usage == USAGE_RUN) {
+                    /* run, check if version is up-to-date and otherwise create VHeader */
+                    nvm_run = (nvm_run_header_t*) nvm_block;
+                    tmp_run = nvm_run->vdata;
+                    if (nvm_run->version < current_version) {
+                        run = arena_create_run_header(nvm_run);
+                        pthread_mutex_lock(&run->bin->mtx);
+                        /* after locking, make sure nobody else has created a VHeader yet */
+                        if (tmp_run == nvm_run->vdata) {
+                            nvm_run->vdata = run;
+                            sfence(); /* need to guarantee that vdata is set before version */
+                            nvm_run->version = current_version;
+                            clflush(nvm_run);
+                            sfence();
+                        } else {
+                            /* VHeader was just created by a concurrent deallocation */
+                            free(run);
+                        }
+                        pthread_mutex_unlock(&run->bin->mtx);
+                    }
+                } else {
+                    /* block in use, skip */
+                    j += nvm_block->n_pages;
+                }
+            }
+        } else {
+            /* must be a huge allocation then, so skip it */
+            nvm_huge = (nvm_huge_header_t*) nvm_chunk;
+            i += nvm_huge->n_chunks;
+        }
+    }
+
+    return NULL;
+}
+
 void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
     uint64_t i;
-    arena_t *arena;
-    nvm_chunk_header_t *nvm_chunk = (nvm_chunk_header_t*) nvm_start;
+    uintptr_t rel_ptr = 0;
+    void *ptr = NULL, **target = NULL;
+    arena_t *arena = NULL;
     nvm_huge_header_t *nvm_huge = NULL;
+    nvm_block_header_t *nvm_block = NULL;
+    nvm_run_header_t *nvm_run = NULL;
     huge_t *huge = NULL;
+    arena_block_t *block = NULL;
+    arena_run_t *run = NULL;
+    char usage = 0;
+    char state = 0;
+    pthread_t recovery_thread;
 
-    /* process the initial arenas chunks */
+    /* create the arenas */
     arenas = (arena_t**) malloc(INITIAL_ARENAS * sizeof(arena_t*));
     for (i=0; i<INITIAL_ARENAS; ++i) {
         arena = (arena_t*) malloc(sizeof(arena_t));
-        arena->id = i;
-        arena_recover(arena, i, nvm_chunk); // TODO: do this in separate threads
+        arena_init(arena, i, NULL, 0);
         arenas[i] = arena;
-
-        nvm_chunk = (nvm_chunk_header_t*) ((uintptr_t)nvm_chunk + CHUNK_SIZE);
     }
 
-    /* process remaining chunks, looking for huge objects */
-    for (; i<n_chunks_recovered; ++i) {
-        nvm_chunk = (nvm_chunk_header_t*) ((uintptr_t)nvm_start + i*CHUNK_SIZE);
-        /* we are not interested in arena chunks */
-        if (GET_USAGE(nvm_chunk->state) == USAGE_HUGE) {
-            nvm_huge = (nvm_huge_header_t*) nvm_chunk;
+    /* process the log to identify potentially inconsistent entries */
+    for (i=0; i<max_log_entries; ++i) {
+        rel_ptr = log_start[i];
+        if (rel_ptr == 0)
+            continue;
+        ptr = __NVM_REL_TO_ABS(rel_ptr);
+        usage = identify_usage(ptr);
 
-            huge = (huge_t*) malloc(sizeof(huge_t));
-            huge->nvm_chunk = nvm_huge;
-            huge->n_chunks = nvm_huge->n_chunks;
-
-            if (GET_STATE(nvm_chunk->state) != STATE_INITIALIZED) {
-                // TODO: check if we can replay the allocation here?
+        if (usage == USAGE_HUGE) {
+            nvm_huge = (nvm_huge_header_t*) ((uintptr_t)ptr - sizeof(nvm_huge_header_t));
+            state = GET_STATE(nvm_huge->state);
+            if (state == STATE_PREFREE) {
+                /* before committed to freeing, rollback */
+                memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_huge->state = USAGE_HUGE | STATE_INITIALIZED;
+                clflush(nvm_huge);
+                sfence();
+            } else if (state == STATE_FREEING) {
+                /* committed to freeing, replay */
+                if (nvm_huge->on[0].ptr) {
+                    target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[0].ptr);
+                    *target = __NVM_REL_TO_ABS(nvm_huge->on[0].value);
+                    clflush(target);
+                    sfence();
+                    if (nvm_huge->on[1].ptr) {
+                        target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[1].ptr);
+                        *target = __NVM_REL_TO_ABS(nvm_huge->on[1].value);
+                        clflush(target);
+                        sfence();
+                    }
+                }
+                memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
+                clflush(nvm_huge);
+                sfence();
+                huge = (huge_t*) malloc(sizeof(huge_t));
+                huge->nvm_chunk = nvm_huge;
+                huge->n_chunks = nvm_huge->n_chunks;
                 tree_add(&huge->link, chunk_node_compare, &free_chunks);
+            } else if (state == STATE_PREACTIVATE) {
+                /* before committed to activation, rollback */
+                memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
+                clflush(nvm_huge);
+                sfence();
+                huge = (huge_t*) malloc(sizeof(huge_t));
+                huge->nvm_chunk = nvm_huge;
+                huge->n_chunks = nvm_huge->n_chunks;
+                tree_add(&huge->link, chunk_node_compare, &free_chunks);
+            } else if (state == STATE_ACTIVATING) {
+                /* committed to activation, replay */
+                if (nvm_huge->on[0].ptr) {
+                    target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[0].ptr);
+                    *target = __NVM_REL_TO_ABS(nvm_huge->on[0].value);
+                    clflush(target);
+                    sfence();
+                    if (nvm_huge->on[1].ptr) {
+                        target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[1].ptr);
+                        *target = __NVM_REL_TO_ABS(nvm_huge->on[1].value);
+                        clflush(target);
+                        sfence();
+                    }
+                }
+                memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_huge->state = USAGE_HUGE | STATE_INITIALIZED;
+                clflush(nvm_huge);
+                sfence();
+            } else {
+                assert(state == STATE_INITIALIZED);
             }
 
-            //nvm_chunk = (nvm_chunk_header_t*) ((uintptr_t)nvm_chunk + huge->n_chunks * CHUNK_SIZE);
-            i += huge->n_chunks - 1;
-            huge = NULL;
-            nvm_huge = NULL;
+        } else if (usage == USAGE_BLOCK) {
+            nvm_block = (nvm_block_header_t*) ((uintptr_t)ptr & ~(BLOCK_SIZE-1));
+            state = GET_STATE(nvm_block->state);
+            if (state == STATE_PREFREE) {
+                /* before committed to freeing, rollback */
+                memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_block->state = USAGE_BLOCK | STATE_INITIALIZED;
+                clflush(nvm_block);
+                sfence();
+            } else if (state == STATE_FREEING) {
+                /* committed to freeing, replay */
+                if (nvm_block->on[0].ptr) {
+                    target = (void**)__NVM_REL_TO_ABS(nvm_block->on[0].ptr);
+                    *target = __NVM_REL_TO_ABS(nvm_block->on[0].value);
+                    clflush(target);
+                    sfence();
+                    if (nvm_block->on[1].ptr) {
+                        target = (void**)__NVM_REL_TO_ABS(nvm_block->on[1].ptr);
+                        *target = __NVM_REL_TO_ABS(nvm_block->on[1].value);
+                        clflush(target);
+                        sfence();
+                    }
+                }
+                memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
+                clflush(nvm_block);
+                sfence();
+                block = (arena_block_t*) malloc(sizeof(arena_block_t));
+                block->nvm_block = nvm_block;
+                block->n_pages = nvm_block->n_pages;
+                block->arena = arenas[nvm_block->arena_id];
+                tree_add(&block->link, block_node_compare, &block->arena->free_pageruns);
+            } else if (state == STATE_PREACTIVATE) {
+                /* before committed to activation, rollback */
+                memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
+                clflush(nvm_block);
+                sfence();
+                block = (arena_block_t*) malloc(sizeof(arena_block_t));
+                block->nvm_block = nvm_block;
+                block->n_pages = nvm_block->n_pages;
+                block->arena = arenas[nvm_block->arena_id];
+                tree_add(&block->link, block_node_compare, &block->arena->free_pageruns);
+            } else if (state == STATE_ACTIVATING) {
+                /* committed to activation, replay */
+                if (nvm_block->on[0].ptr) {
+                    target = (void**)__NVM_REL_TO_ABS(nvm_block->on[0].ptr);
+                    *target = __NVM_REL_TO_ABS(nvm_block->on[0].value);
+                    clflush(target);
+                    sfence();
+                    if (nvm_block->on[1].ptr) {
+                        target = (void**)__NVM_REL_TO_ABS(nvm_block->on[1].ptr);
+                        *target = __NVM_REL_TO_ABS(nvm_block->on[1].value);
+                        clflush(target);
+                        sfence();
+                    }
+                }
+                memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
+                nvm_block->state = USAGE_BLOCK | STATE_INITIALIZED;
+                clflush(nvm_block);
+                sfence();
+            } else {
+                assert(state == STATE_INITIALIZED);
+            }
+
+        } else if (usage == USAGE_RUN) {
+            nvm_run = (nvm_run_header_t*) ((uintptr_t)ptr & ~(BLOCK_SIZE-1));
+            state = GET_STATE(nvm_run->state);
+            if (state == STATE_PREFREE) {
+                /* before committed to freeing, rollback */
+            } else if (state == STATE_FREEING) {
+                /* committed to freeing, replay */
+                if (nvm_run->on[0].ptr) {
+                    target = (void**)__NVM_REL_TO_ABS(nvm_run->on[0].ptr);
+                    *target = __NVM_REL_TO_ABS(nvm_run->on[0].value);
+                    clflush(target);
+                    sfence();
+                    if (nvm_run->on[1].ptr) {
+                        target = (void**)__NVM_REL_TO_ABS(nvm_run->on[1].ptr);
+                        *target = __NVM_REL_TO_ABS(nvm_run->on[1].value);
+                        clflush(target);
+                        sfence();
+                    }
+                }
+                nvm_run->bitmap[nvm_run->bit_idx/8] &= ~(1 << (nvm_run->bit_idx % 8));
+            } else if (state == STATE_PREACTIVATE) {
+                /* before committed to activation, rollback */
+            } else if (state == STATE_ACTIVATING) {
+                /* committed to activation, replay */
+                if (nvm_run->on[0].ptr) {
+                    target = (void**)__NVM_REL_TO_ABS(nvm_run->on[0].ptr);
+                    *target = __NVM_REL_TO_ABS(nvm_run->on[0].value);
+                    clflush(target);
+                    sfence();
+                    if (nvm_run->on[1].ptr) {
+                        target = (void**)__NVM_REL_TO_ABS(nvm_run->on[1].ptr);
+                        *target = __NVM_REL_TO_ABS(nvm_run->on[1].value);
+                        clflush(target);
+                        sfence();
+                    }
+                }
+                nvm_run->bitmap[nvm_run->bit_idx/8] |= 1 << (nvm_run->bit_idx % 8);
+            } else {
+                assert(state == STATE_INITIALIZED);
+            }
+            /* create the VHeader and reset fields either way */
+            run = arena_create_run_header(nvm_run);
+            run->next = run->bin->runs;
+            run->bin->runs = run;
+            memset(nvm_run->on, 0, 2*sizeof(nvm_ptrset_t));
+            nvm_run->version = current_version;
+            nvm_run->vdata = run;
+            nvm_run->bit_idx = -1;
+            nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
+            clflush(nvm_run);
+            sfence();
+
+        } else {
+            /* error case, this should not happen! */
         }
+        log_start[i] = (uintptr_t) NULL;
     }
+
+    pthread_create(&recovery_thread, NULL, nvm_recovery_thread, (void*)n_chunks_recovered);
+    pthread_detach(recovery_thread);
 }
 
 nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks) {

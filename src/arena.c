@@ -10,8 +10,6 @@
 #include "chunk.h"
 #include "util.h"
 
-#include <ulib/util_algo.h>
-
 #define NVM_ABS_TO_REL(base, ptr) ((uintptr_t)ptr - (uintptr_t)base)
 #define NVM_REL_TO_ABS(base, ptr) (void*)((uintptr_t)base + (uintptr_t)ptr)
 
@@ -22,7 +20,6 @@ extern uint64_t current_version;
 arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes);
 nvm_block_header_t* arena_create_block(arena_t *arena, uint32_t n_pages);
 arena_block_t* arena_add_chunk(arena_t *arena);
-inline arena_run_t* arena_create_run_header(nvm_run_header_t *nvm_run);
 
 /* comparison function for a bin's run tree - sort by address on NVM */
 int run_node_compare(const void *_a, const void *_b) {
@@ -430,6 +427,7 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
         nvm_run->n_bytes = n_bytes;
         nvm_run->vdata = run;
+        nvm_run->bit_idx = -1;
         nvm_run->arena_id = arena->id;
         nvm_run->version = current_version;
         clflush(nvm_run);
@@ -457,6 +455,7 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         memset(nvm_run, 0, sizeof(nvm_run_header_t));
         nvm_run->vdata = run;
         memset(nvm_run->bitmap, 0, 8);
+        nvm_run->bit_idx = -1;
         nvm_run->arena_id = arena->id;
         nvm_run->version = current_version;
         sfence();
@@ -567,17 +566,31 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     return free_block;
 }
 
-inline arena_run_t* arena_create_run_header(nvm_run_header_t *nvm_run) {
+arena_run_t* arena_create_run_header(nvm_run_header_t *nvm_run) {
+    int i=0;
     arena_t *arena = arenas[nvm_run->arena_id];
     arena_run_t *run = (arena_run_t*) malloc(sizeof(arena_run_t));
 
-    memset(run->bitmap, 0, sizeof(run->bitmap));
+    memcpy(run->bitmap, nvm_run->bitmap, 8);
     run->nvm_run = nvm_run;
     run->bin = &arena->bins[nvm_run->n_bytes/64 - 1];
     run->elem_size = nvm_run->n_bytes;
     run->n_free = 0;
     run->n_max = (BLOCK_SIZE-64) / run->elem_size;
+    for (i=0; i<run->n_max; ++i) {
+        if ((run->bitmap[i/8] & 1<<(i%8)) == 0) {
+            ++run->n_free;
+        }
+    }
     run->next = NULL;
 
     return run;
+}
+
+arena_block_t* arena_create_block_header(nvm_block_header_t *nvm_block) {
+    arena_block_t *block = (arena_block_t*) malloc(sizeof(arena_block_t));
+    block->nvm_block = nvm_block;
+    block->n_pages = nvm_block->n_pages;
+    block->arena = arenas[nvm_block->arena_id];
+    return block;
 }

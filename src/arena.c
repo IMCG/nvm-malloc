@@ -58,9 +58,6 @@ void arena_init(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk, in
     nvm_block_header_t *nvm_block;
 
     arena->id = id;
-    arena->n_chunks = 1;
-    arena->chunk_ptrs = (nvm_chunk_header_t**) malloc(sizeof(nvm_chunk_header_t**) * 50);
-    arena->chunk_ptrs[0] = first_chunk;
     arena->free_pageruns = NULL;
     pthread_mutex_init(&arena->mtx, NULL);
 
@@ -86,113 +83,6 @@ void arena_init(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk, in
         nvm_block->n_pages = CHUNK_SIZE / BLOCK_SIZE - 1;
         nvm_block->arena_id = arena->id;
         clflush(nvm_block);
-    }
-}
-
-void arena_recover(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk) {
-    arena_block_t *block = NULL;
-    arena_run_t *run = NULL;
-    nvm_chunk_header_t *nvm_chunk = NULL;
-    nvm_block_header_t *nvm_block = NULL;
-    nvm_run_header_t *nvm_run = NULL;
-    int i;
-    char mask;
-
-    /* perform regular intialization */
-    arena_init(arena, id, first_chunk, 0);
-
-    /* walk through all chunks for the arena */
-    nvm_chunk = arena->chunk_ptrs[0];
-    while (1) {
-        /* check that the block is consistent */
-        assert(nvm_chunk->state == (USAGE_ARENA | STATE_INITIALIZED));
-        assert(strncmp(nvm_chunk->signature, NVM_CHUNK_SIGNATURE, 47) == 0);
-
-        /* register the chunk in the arena */
-        arena->chunk_ptrs[arena->n_chunks] = nvm_chunk;
-        arena->n_chunks += 1;
-        if (arena->n_chunks % 50 == 0) {
-            arena->chunk_ptrs = (nvm_chunk_header_t**) realloc(arena->chunk_ptrs, sizeof(nvm_chunk_header_t**)*(arena->n_chunks + 50));
-        }
-
-        /* walk the chunk and recover blocks and runs */
-        nvm_block = (nvm_block_header_t*) (nvm_chunk+1);
-        // TODO: take care of the `on` pointer!!!
-        while ((uintptr_t)nvm_block < ((uintptr_t)nvm_chunk + CHUNK_SIZE)) {
-            //if (nvm_block->state == (USAGE_RUN | STATE_INITIALIZED)) {
-            if (GET_USAGE(nvm_block->state) == USAGE_RUN) {
-                nvm_run = (nvm_run_header_t*) nvm_block;
-
-                run = (arena_run_t*) malloc(sizeof(arena_run_t));
-                run->nvm_run = nvm_run;
-                run->elem_size = nvm_run->n_bytes;
-                run->bin = &arena->bins[run->elem_size/64 - 1];
-                run->n_max = (BLOCK_SIZE-sizeof(nvm_run_header_t)) / run->elem_size;
-                memcpy(run->bitmap, nvm_run->bitmap, 8);
-                /* calculate number of free slots in run */
-                run->n_free = run->n_max;
-                mask = 1;
-                for (i=0; i<run->n_max; ++i)
-                    if ((run->bitmap[i/8] & (mask<<(i%8))) != 0)
-                        run->n_free -= 1;
-
-                nvm_run->vdata = run;
-
-                /* register in respective bin unless full */
-                if (run->n_free > 0 && run->bin->current_run == NULL) {
-                    //tree_add(&run->link, run_node_compare, &run->bin->runs);
-                    //run->next = run->bin->runs;
-                    run->bin->current_run = run;
-                    run->bin->n_free += run->n_free;
-                    run->bin->n_runs += 1; // TODO: only increment n_runs for non-full runs?
-                } else  if (run->n_free > 0) {
-                    //tree_add(&run->link, run_node_compare, &run->bin->runs);
-                    run->next = run->bin->runs;
-                    run->bin->runs = run;
-                    run->bin->n_free += run->n_free;
-                    run->bin->n_runs += 1; // TODO: only increment n_runs for non-full runs?
-                }
-
-                /* finish iteration */
-                run = NULL;
-                nvm_run = NULL;
-                nvm_block = (nvm_block_header_t*) ((uintptr_t)nvm_block + BLOCK_SIZE);
-
-            //} else if (nvm_block->state == (USAGE_BLOCK | STATE_INITIALIZED)) {
-            } else if (GET_USAGE(nvm_block->state) == USAGE_BLOCK) {
-                block = (arena_block_t*) malloc(sizeof(arena_block_t));
-                block->nvm_block = nvm_block;
-                block->n_pages = nvm_block->n_pages;
-                block->arena = arena;
-
-                /* finish iteration */
-                nvm_block = (nvm_block_header_t*) ((uintptr_t)nvm_block + block->n_pages * BLOCK_SIZE);
-                block = NULL;
-
-            } else {
-                /* everything else is assumed to be a free block */
-                if (nvm_block->n_pages == 0) {
-                    nvm_block = (nvm_block_header_t*) ((uintptr_t)nvm_block + BLOCK_SIZE);
-                }
-                block = (arena_block_t*) malloc(sizeof(arena_block_t));
-                block->nvm_block = nvm_block;
-                block->n_pages = nvm_block->n_pages;
-                block->arena = arena;
-                nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
-
-                /* register in arenas free list */
-                tree_add(&block->link, block_node_compare, &arena->free_pageruns);
-
-                /* finish iteration */
-                nvm_block = (nvm_block_header_t*) ((uintptr_t)nvm_block + block->n_pages * BLOCK_SIZE);
-                block = NULL;
-            }
-        }
-
-        if (nvm_chunk->next_arena_chunk)
-            nvm_chunk = NVM_REL_TO_ABS(nvm_start, nvm_chunk->next_arena_chunk);
-        else
-            break;
     }
 }
 
@@ -516,7 +406,7 @@ nvm_block_header_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
 }
 
 arena_block_t* arena_add_chunk(arena_t *arena) {
-    nvm_chunk_header_t *chunk = NULL, *last_chunk = NULL;
+    nvm_chunk_header_t *chunk = NULL;
     nvm_block_header_t *nvm_block = NULL;
     arena_block_t *free_block = NULL;
 
@@ -528,17 +418,10 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     /* first initialize the chunk */
     memset(chunk->object_table, 0, 63*sizeof(nvm_object_table_entry_t));
     chunk->state = USAGE_ARENA | STATE_INITIALIZING;
-    chunk->next_arena_chunk = (uintptr_t)NULL;
     chunk->next_ot_chunk = (uintptr_t)NULL;
     strncpy(chunk->signature, NVM_CHUNK_SIGNATURE, 47);
     chunk->signature[46] = '\0';
     clflush_range(chunk, BLOCK_SIZE);
-    sfence();
-
-    /* link chunk by registering it in the previous one */
-    last_chunk = arena->chunk_ptrs[arena->n_chunks-1];
-    last_chunk->next_arena_chunk = NVM_ABS_TO_REL(nvm_start, chunk);
-    clflush(arena->chunk_ptrs[arena->n_chunks-1]);
     sfence();
 
     /* create initial free block */
@@ -557,11 +440,6 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     chunk->state = USAGE_ARENA | STATE_INITIALIZED;
     clflush(chunk);
     sfence();
-    arena->chunk_ptrs[arena->n_chunks] = chunk;
-    arena->n_chunks += 1;
-    if (arena->n_chunks % 50 == 0) {
-        arena->chunk_ptrs = (nvm_chunk_header_t**) realloc(arena->chunk_ptrs, sizeof(nvm_chunk_header_t**)*(arena->n_chunks + 50));
-    }
 
     return free_block;
 }

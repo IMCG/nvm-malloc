@@ -94,8 +94,7 @@ struct nvm_object_table_entry_s {
 
 struct nvm_chunk_header_s {
     char state;
-    char signature[47];
-    uintptr_t next_arena_chunk;
+    char signature[55];
     uintptr_t next_ot_chunk;
     nvm_object_table_entry_t object_table[63];
 } __attribute__((aligned(BLOCK_SIZE)));
@@ -176,8 +175,6 @@ struct arena_bin_s {
 
 struct arena_s {
     uint32_t id;
-    uint16_t n_chunks;
-    nvm_chunk_header_t **chunk_ptrs;
     arena_bin_t bins[31];
     node_t *free_pageruns;
     pthread_mutex_t mtx;

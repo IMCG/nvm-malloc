@@ -504,6 +504,7 @@ void* nvm_recovery_thread(void *chunk_count) {
                     pthread_mutex_lock(&block->arena->mtx);
                     tree_add(&block->link, block_node_compare, &block->arena->free_pageruns);
                     pthread_mutex_unlock(&block->arena->mtx);
+                    j += nvm_block->n_pages;
                 } else if (usage == USAGE_RUN) {
                     /* run, check if version is up-to-date and otherwise create VHeader */
                     nvm_run = (nvm_run_header_t*) nvm_block;
@@ -524,17 +525,23 @@ void* nvm_recovery_thread(void *chunk_count) {
                         }
                         pthread_mutex_unlock(&run->bin->mtx);
                     }
+                    ++j;
                 } else {
                     /* block in use, skip */
+                    uint64_t oldj = j;
                     j += nvm_block->n_pages;
+                    if (j == oldj) {
+                    }
                 }
             }
+            ++i;
         } else {
             /* must be a huge allocation then, so skip it */
             nvm_huge = (nvm_huge_header_t*) nvm_chunk;
             i += nvm_huge->n_chunks;
         }
     }
+
 
     return NULL;
 }

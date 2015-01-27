@@ -232,3 +232,28 @@ int ot_remove(const char *id) {
         return OT_FAIL;
     }
 }
+
+void ot_teardown() {
+    chainhash_itr_t(ot) it;
+    object_table_entry_t *value = NULL;
+
+    /* delete object table hashmap */
+    for (it = chainhash_begin(ot, ot_hashmap); !chainhash_end(it); ) {
+        /* no need to free key, just a pointer to the value's id field */
+        value = chainhash_value(ot, it);
+        free(value);
+        if (chainhash_advance(ot, &it))
+            break;
+    }
+    chainhash_destroy(ot, ot_hashmap);
+    ot_hashmap = NULL;
+    total_slots_available = 0;
+    next_nvm_slot = 0;
+    first_chunk = NULL;
+
+    /* cleanup slot buffer */
+    slot_buffer_next_idx = 0;
+    slot_buffer_head_idx = 0;
+    slot_buffer_tail_idx = -1;
+    slot_buffer_n_free = 0;
+}

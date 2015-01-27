@@ -20,4 +20,6 @@ int run_node_compare(const void *_a, const void *_b);
 
 int block_node_compare(const void *_a, const void *_b);
 
+void arena_teardown(arena_t *arena);
+
 #endif /* ARENA_H_ */

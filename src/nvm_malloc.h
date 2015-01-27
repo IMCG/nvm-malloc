@@ -34,6 +34,8 @@ extern void* nvm_abs(void *rel_ptr);
 
 extern void* nvm_rel(void *abs_ptr);
 
+extern void nvm_teardown();
+
 #ifdef __cplusplus
 }
 #endif

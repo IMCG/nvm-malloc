@@ -31,7 +31,7 @@ inline void error_and_exit(char *msg, ...) {
 }
 
 static void            *chunk_region_start = NULL;
-       void            *meta_info = NULL;
+       void            *meta_info = NULL; /* must be non-static as it is exported to other translation units */
 static uint64_t        max_chunks = 0;
 static int             backing_file_fd = -1;
 static char            *backing_file_path = NULL;
@@ -163,4 +163,21 @@ void* activate_more_chunks(uint64_t n_chunks) {
     pthread_mutex_unlock(&chunk_mtx);
 
     return next_chunk_addr;
+}
+
+void teardown_nvm_space() {
+    munmap(chunk_region_start, max_chunks*CHUNK_SIZE);
+    chunk_region_start = NULL;
+    munmap(meta_info, BLOCK_SIZE);
+    meta_info = NULL;
+    close(backing_file_fd);
+    backing_file_fd = -1;
+    close(meta_file_fd);
+    meta_file_fd = -1;
+    free(backing_file_path);
+    backing_file_path = NULL;
+    free(meta_file_path);
+    meta_file_path = NULL;
+    max_chunks = 0;
+    next_chunk = 0;
 }

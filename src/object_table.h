@@ -19,4 +19,6 @@ object_table_entry_t* ot_get(const char *id);
 
 int ot_remove(const char *id);
 
+void ot_teardown();
+
 #endif /* OBJECT_TABLE_H_ */

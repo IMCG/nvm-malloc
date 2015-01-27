@@ -472,3 +472,31 @@ arena_block_t* arena_create_block_header(nvm_block_header_t *nvm_block) {
     block->arena = arenas[nvm_block->arena_id];
     return block;
 }
+
+void arena_teardown(arena_t *arena) {
+    arena_block_t *node = NULL, *tmp = NULL;
+    uint8_t i = 0;
+    arena_bin_t *bin = NULL;
+    arena_run_t *run = NULL;
+
+    /* free all elements of the free block tree */
+    tree_for_each_entry_safe(node, tmp, arena->free_pageruns, link) {
+        tree_del(&node->link, &arena->free_pageruns);
+        free(node);
+    }
+    /* iterate through bins and delete all run headers */
+    for (i=0; i<31; ++i) {
+        bin = &arena->bins[i];
+        if (bin->current_run) {
+            free(bin->current_run);
+            bin->current_run = NULL;
+        }
+        while (bin->runs) {
+            run = bin->runs;
+            bin->runs = bin->runs->next;
+            free(run);
+        }
+    }
+    /* free arena object itself */
+    free(arena);
+}

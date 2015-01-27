@@ -77,7 +77,9 @@ static chainhash_t(tmap) *tidmap = NULL;
 void* nvm_initialize(const char *workspace_path, int recover_if_possible) {
     uint64_t n_chunks_recovered = 0;
 
-    assert(nvm_start == NULL);
+    if (nvm_start != NULL) {
+        return nvm_start;
+    }
     nvm_start = initalize_nvm_space(workspace_path, MAX_NVM_CHUNKS);
 
     tidmap = chainhash_init(tmap, INITIAL_ARENAS);
@@ -778,4 +780,44 @@ void log_activate(void *ptr) {
     *slot = __NVM_ABS_TO_REL(ptr);
     clflush(slot);
     sfence();
+}
+
+void nvm_teardown() {
+    /* WARNING: this method is NOT thread safe! Make sure all nvm_malloc operations
+       are finished before calling this method. */
+    huge_t *node = NULL, *tmp = NULL;
+    uint8_t i = 0;
+
+    if (nvm_start == NULL) {
+        return;
+    }
+
+    /* teardown chunk system */
+    teardown_nvm_space();
+
+    /* free all global free chunk headers */
+    tree_for_each_entry_safe(node, tmp, free_chunks, link) {
+        tree_del(&node->link, &free_chunks);
+        free(node);
+    }
+
+    /* deconstruct all arenas */
+    for (i=0; i<INITIAL_ARENAS; ++i) {
+        arena_teardown(arenas[i]);
+        arenas[i] = NULL;
+    }
+    free(arenas);
+
+    /* deconstruct object table */
+    ot_teardown();
+
+    /* destroy thread->arena mapping (no explicit deallocations necessary) */
+    chainhash_destroy(tmap, tidmap);
+    tidmap = NULL;
+
+    /* zero some global values */
+    nvm_start = NULL;
+    current_version = 0;
+    next_log_entry = 0;
+    log_start = (uintptr_t*) NULL;
 }

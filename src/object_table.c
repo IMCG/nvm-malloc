@@ -133,8 +133,7 @@ void ot_recover(void *nvm_start) {
                 } else {
                     memset(nvm_entry, 0, sizeof(nvm_object_table_entry_t));
                 }
-                clflush(nvm_entry);
-                sfence();
+                PERSIST(nvm_entry);
             }
 
             if (keep) {

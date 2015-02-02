@@ -82,7 +82,7 @@ void arena_init(arena_t *arena, uint32_t id, nvm_chunk_header_t *first_chunk, in
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         nvm_block->n_pages = CHUNK_SIZE / BLOCK_SIZE - 1;
         nvm_block->arena_id = arena->id;
-        clflush(nvm_block);
+        PERSIST(nvm_block);
     }
 }
 
@@ -181,21 +181,18 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
             sfence();
 
             *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
-            clflush(*link_ptr1);
+            PERSIST(*link_ptr1);
             if (link_ptr2) {
                 *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
-                clflush(*link_ptr2);
+                PERSIST(*link_ptr2);
             }
-
-            sfence();
         }
 
         /* mark block as free on NVM */
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         sfence();
         memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
-        clflush(nvm_block);
-        sfence();
+        PERSIST(nvm_block);
 
         /* add the block back into the arena's free list */
         pthread_mutex_lock(&arena->mtx);
@@ -247,10 +244,10 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
             sfence();
 
             *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
-            clflush(*link_ptr1);
+            PERSIST(*link_ptr1);
             if (link_ptr2) {
                 *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
-                clflush(*link_ptr2);
+                PERSIST(*link_ptr2);
             }
         }
 
@@ -262,8 +259,7 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
         sfence();
         nvm_run->bit_idx = -1;
         memset(nvm_run->on, 0, 2*sizeof(nvm_ptrset_t));
-        clflush(nvm_run);
-        sfence();
+        PERSIST(nvm_run);
 
         /* mark slot as free in volatile memory */
         pthread_mutex_lock(&bin->mtx);
@@ -320,14 +316,12 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         nvm_run->bit_idx = -1;
         nvm_run->arena_id = arena->id;
         nvm_run->version = current_version;
-        clflush(nvm_run);
-        sfence();
+        PERSIST(nvm_run);
 
         /* shrink the free block and reinsert into tree */
         free_block->n_pages -= 1;
         free_block->nvm_block->n_pages = free_block->n_pages;
-        clflush(free_block->nvm_block);
-        sfence();
+        PERSIST(free_block->nvm_block);
         tree_add(&free_block->link, block_node_compare, &arena->free_pageruns);
 
         /* now we can release the lock */
@@ -351,8 +345,7 @@ arena_run_t* arena_create_run(arena_t *arena, arena_bin_t *bin, uint32_t n_bytes
         sfence();
         nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
         nvm_run->n_bytes = n_bytes;
-        clflush(nvm_run);
-        sfence();
+        PERSIST(nvm_run);
 
         assert(nvm_run->state == (USAGE_RUN | STATE_INITIALIZED));
     }
@@ -383,15 +376,13 @@ nvm_block_header_t* arena_create_block(arena_t *arena, uint32_t n_pages) {
         nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
         nvm_block->n_pages = n_pages;
         nvm_block->arena_id = arena->id;
-        clflush(nvm_block);
-        sfence();
+        PERSIST(nvm_block);
 
         /* shrink the free block and reinsert into tree */
         free_block->n_pages -= n_pages;
         free_block->nvm_block->n_pages -= n_pages;
         assert(free_block->nvm_block->n_pages > 0);
-        clflush(free_block->nvm_block);
-        sfence();
+        PERSIST(free_block->nvm_block);
         tree_add(&free_block->link, block_node_compare, &arena->free_pageruns);
 
         /* now we can release the lock */
@@ -421,8 +412,7 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     chunk->next_ot_chunk = (uintptr_t)NULL;
     strncpy(chunk->signature, NVM_CHUNK_SIGNATURE, 47);
     chunk->signature[46] = '\0';
-    clflush_range(chunk, BLOCK_SIZE);
-    sfence();
+    PERSIST_RANGE(chunk, BLOCK_SIZE);
 
     /* create initial free block */
     free_block = (arena_block_t*) malloc(sizeof(arena_block_t));
@@ -433,13 +423,11 @@ arena_block_t* arena_add_chunk(arena_t *arena) {
     memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
     nvm_block->state = USAGE_FREE | STATE_INITIALIZED; /* no need to worry, as long as chunk header is still in INITIALIZING */
     nvm_block->n_pages = CHUNK_SIZE / BLOCK_SIZE - 1;
-    clflush(nvm_block);
-    sfence();
+    PERSIST(nvm_block);
 
     /* set chunk's status to initialized */
     chunk->state = USAGE_ARENA | STATE_INITIALIZED;
-    clflush(chunk);
-    sfence();
+    PERSIST(chunk);
 
     return free_block;
 }

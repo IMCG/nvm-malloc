@@ -92,8 +92,7 @@ void* nvm_initialize(const char *workspace_path, int recover_if_possible) {
     } else {
         /* chunks were recovered, perform cleanup and consistency check */
         current_version = (*(uint64_t*) meta_info)++;
-        clflush(meta_info);
-        sfence();
+        PERSIST(meta_info);
         log_start = (uintptr_t*)meta_info + 1;
         nvm_initialize_recovered(n_chunks_recovered);
         ot_init(nvm_start);
@@ -145,8 +144,7 @@ void* nvm_reserve(uint64_t n_bytes) {
                 nvm_huge = (nvm_huge_header_t*) ((uintptr_t)huge->nvm_chunk + (huge->n_chunks - n_chunks)*CHUNK_SIZE);
                 nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
                 nvm_huge->n_chunks = n_chunks;
-                clflush(nvm_huge);
-                sfence();
+                PERSIST(nvm_huge);
 
                 huge->nvm_chunk->n_chunks -= n_chunks;
                 huge->n_chunks -= n_chunks;
@@ -210,20 +208,17 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
             sfence();
 
             *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
-            clflush(*link_ptr1);
+            PERSIST(*link_ptr1);
             if (link_ptr2) {
                 *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
-                clflush(*link_ptr2);
+                PERSIST(*link_ptr2);
             }
-
-            sfence();
         }
 
         nvm_huge->state = USAGE_HUGE | STATE_INITIALIZED;
         sfence();
         memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
-        clflush(nvm_huge);
-        sfence();
+        PERSIST(nvm_huge);
     } else {
         nvm_block = (nvm_block_header_t*) ((uintptr_t)ptr & ~(BLOCK_SIZE-1));
         if (GET_USAGE(nvm_block->state) == USAGE_FREE) {
@@ -243,20 +238,17 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
                 sfence();
 
                 *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
-                clflush(*link_ptr1);
+                PERSIST(*link_ptr1);
                 if (link_ptr2) {
                     *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
-                    clflush(*link_ptr2);
+                    PERSIST(*link_ptr2);
                 }
-
-                sfence();
             }
 
             nvm_block->state = USAGE_BLOCK | STATE_INITIALIZED;
             sfence();
             memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
-            clflush(nvm_block);
-            sfence();
+            PERSIST(nvm_block);
         } else {
             /* small block */
             nvm_run = (nvm_run_header_t*) nvm_block;
@@ -282,10 +274,10 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
                 sfence();
 
                 *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
-                clflush(*link_ptr1);
+                PERSIST(*link_ptr1);
                 if (link_ptr2) {
                     *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
-                    clflush(*link_ptr2);
+                    PERSIST(*link_ptr2);
                 }
             }
 
@@ -297,8 +289,7 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
             sfence();
             nvm_run->bit_idx = -1;
             memset(nvm_run->on, 0, 2*sizeof(nvm_ptrset_t));
-            clflush(nvm_run);
-            sfence();
+            PERSIST(nvm_run);
         }
     }
 }
@@ -320,16 +311,14 @@ void nvm_activate_id(const char *id) {
     nvm_ot_entry->ptr = __NVM_ABS_TO_REL(ot_entry->data_ptr);
     sfence();
     nvm_ot_entry->state = STATE_INITIALIZING;
-    clflush(nvm_ot_entry);
-    sfence();
+    PERSIST(nvm_ot_entry);
 
     /* step 2 - activate data normally */
     nvm_activate(ot_entry->data_ptr, NULL, NULL, NULL, NULL);
 
     /* step 3 - activate NVM object table entry */
     nvm_ot_entry->state = STATE_INITIALIZED;
-    clflush(nvm_ot_entry);
-    sfence();
+    PERSIST(nvm_ot_entry);
 }
 
 void* nvm_get_id(const char *id) {
@@ -368,20 +357,17 @@ void nvm_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, void
             sfence();
 
             *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
-            clflush(*link_ptr1);
+            PERSIST(*link_ptr1);
             if (link_ptr2) {
                 *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
-                clflush(*link_ptr2);
+                PERSIST(*link_ptr2);
             }
-
-            sfence();
         }
 
         nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
         sfence();
         memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
-        clflush(nvm_huge);
-        sfence();
+        PERSIST(nvm_huge);
 
         pthread_mutex_lock(&chunk_mtx);
         tree_add(&huge->link, chunk_node_compare, &free_chunks);
@@ -402,8 +388,7 @@ void nvm_free_id(const char *id) {
 
     nvm_entry = ot_entry->nvm_entry;
     nvm_entry->state = STATE_FREEING; // TODO: maybe not do this and instead do sanity check on startup?
-    clflush(nvm_entry);
-    sfence();
+    PERSIST(nvm_entry);
 
     nvm_free(ot_entry->data_ptr, NULL, NULL, NULL, NULL);
 
@@ -411,8 +396,7 @@ void nvm_free_id(const char *id) {
 }
 
 extern void nvm_persist(const void *ptr, uint64_t n_bytes) {
-    clflush_range(ptr, n_bytes);
-    sfence();
+    PERSIST_RANGE(ptr, n_bytes);
 }
 
 void* nvm_abs(void *rel_ptr) {
@@ -437,8 +421,7 @@ void nvm_initialize_empty() {
     /* perform initialization for chunks when not recovering */
     initialize_chunks();
     *(uint64_t*) meta_info = 1;
-    clflush(meta_info);
-    sfence();
+    PERSIST(meta_info);
     current_version = 0;
 
     /* allocate chunks for the initial arena setup */
@@ -452,23 +435,20 @@ void nvm_initialize_empty() {
         strncpy(chunk_hdr->signature, NVM_CHUNK_SIGNATURE, 47);
         chunk_hdr->next_ot_chunk = i < INITIAL_ARENAS-1 ? (uintptr_t)((i+1)*CHUNK_SIZE) : (uintptr_t)NULL;
         memset((void*)chunk_hdr->object_table, 0, 4032);
-        clflush_range((void*)chunk_hdr, sizeof(nvm_chunk_header_t));
-        sfence();
+        PERSIST_RANGE((void*)chunk_hdr, sizeof(nvm_chunk_header_t));
 
         /* initialize the chunk content */
         block_hdr = (nvm_block_header_t*)(chunk_hdr+1);
         block_hdr->state = STATE_INITIALIZING | USAGE_FREE;
         block_hdr->n_pages = (CHUNK_SIZE - sizeof(nvm_chunk_header_t) - sizeof(nvm_block_header_t)) / BLOCK_SIZE;
         memset((void*)((uintptr_t)block_hdr + 5), 0, 59);
-        clflush((void*)block_hdr);
-        sfence();
+        PERSIST((void*)block_hdr);
     }
     /* mark the chunks as initialized */
     for (i=0; i<INITIAL_ARENAS; ++i) {
         chunk_hdr = (nvm_chunk_header_t*)__NVM_REL_TO_ABS(i*CHUNK_SIZE);
         chunk_hdr->state = STATE_INITIALIZED | USAGE_ARENA;
-        clflush((void*)chunk_hdr);
-        sfence();
+        PERSIST((void*)chunk_hdr);
     }
 
     /* create arenas on chunks */
@@ -517,8 +497,7 @@ void* nvm_recovery_thread(void *chunk_count) {
                             nvm_run->vdata = run;
                             sfence(); /* need to guarantee that vdata is set before version */
                             nvm_run->version = current_version;
-                            clflush(nvm_run);
-                            sfence();
+                            PERSIST(nvm_run);
                         } else {
                             /* VHeader was just created by a concurrent deallocation */
                             free(run);
@@ -584,26 +563,22 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* before committed to freeing, rollback */
                 memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_huge->state = USAGE_HUGE | STATE_INITIALIZED;
-                clflush(nvm_huge);
-                sfence();
+                PERSIST(nvm_huge);
             } else if (state == STATE_FREEING) {
                 /* committed to freeing, replay */
                 if (nvm_huge->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[0].ptr);
                     *target = __NVM_REL_TO_ABS(nvm_huge->on[0].value);
-                    clflush(target);
-                    sfence();
+                    PERSIST(target);
                     if (nvm_huge->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[1].ptr);
                         *target = __NVM_REL_TO_ABS(nvm_huge->on[1].value);
-                        clflush(target);
-                        sfence();
+                        PERSIST(target);
                     }
                 }
                 memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
-                clflush(nvm_huge);
-                sfence();
+                PERSIST(nvm_huge);
                 huge = (huge_t*) malloc(sizeof(huge_t));
                 huge->nvm_chunk = nvm_huge;
                 huge->n_chunks = nvm_huge->n_chunks;
@@ -612,8 +587,7 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* before committed to activation, rollback */
                 memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_huge->state = USAGE_FREE | STATE_INITIALIZED;
-                clflush(nvm_huge);
-                sfence();
+                PERSIST(nvm_huge);
                 huge = (huge_t*) malloc(sizeof(huge_t));
                 huge->nvm_chunk = nvm_huge;
                 huge->n_chunks = nvm_huge->n_chunks;
@@ -623,19 +597,16 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 if (nvm_huge->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[0].ptr);
                     *target = __NVM_REL_TO_ABS(nvm_huge->on[0].value);
-                    clflush(target);
-                    sfence();
+                    PERSIST(target);
                     if (nvm_huge->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[1].ptr);
                         *target = __NVM_REL_TO_ABS(nvm_huge->on[1].value);
-                        clflush(target);
-                        sfence();
+                        PERSIST(target);
                     }
                 }
                 memset(nvm_huge->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_huge->state = USAGE_HUGE | STATE_INITIALIZED;
-                clflush(nvm_huge);
-                sfence();
+                PERSIST(nvm_huge);
             } else {
                 assert(state == STATE_INITIALIZED);
             }
@@ -647,26 +618,22 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* before committed to freeing, rollback */
                 memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_block->state = USAGE_BLOCK | STATE_INITIALIZED;
-                clflush(nvm_block);
-                sfence();
+                PERSIST(nvm_block);
             } else if (state == STATE_FREEING) {
                 /* committed to freeing, replay */
                 if (nvm_block->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_block->on[0].ptr);
                     *target = __NVM_REL_TO_ABS(nvm_block->on[0].value);
-                    clflush(target);
-                    sfence();
+                    PERSIST(target);
                     if (nvm_block->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_block->on[1].ptr);
                         *target = __NVM_REL_TO_ABS(nvm_block->on[1].value);
-                        clflush(target);
-                        sfence();
+                        PERSIST(target);
                     }
                 }
                 memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
-                clflush(nvm_block);
-                sfence();
+                PERSIST(nvm_block);
                 block = (arena_block_t*) malloc(sizeof(arena_block_t));
                 block->nvm_block = nvm_block;
                 block->n_pages = nvm_block->n_pages;
@@ -676,8 +643,7 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* before committed to activation, rollback */
                 memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_block->state = USAGE_FREE | STATE_INITIALIZED;
-                clflush(nvm_block);
-                sfence();
+                PERSIST(nvm_block);
                 block = (arena_block_t*) malloc(sizeof(arena_block_t));
                 block->nvm_block = nvm_block;
                 block->n_pages = nvm_block->n_pages;
@@ -688,19 +654,16 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 if (nvm_block->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_block->on[0].ptr);
                     *target = __NVM_REL_TO_ABS(nvm_block->on[0].value);
-                    clflush(target);
-                    sfence();
+                    PERSIST(target);
                     if (nvm_block->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_block->on[1].ptr);
                         *target = __NVM_REL_TO_ABS(nvm_block->on[1].value);
-                        clflush(target);
-                        sfence();
+                        PERSIST(target);
                     }
                 }
                 memset(nvm_block->on, 0, 2*sizeof(nvm_ptrset_t));
                 nvm_block->state = USAGE_BLOCK | STATE_INITIALIZED;
-                clflush(nvm_block);
-                sfence();
+                PERSIST(nvm_block);
             } else {
                 assert(state == STATE_INITIALIZED);
             }
@@ -715,13 +678,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 if (nvm_run->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_run->on[0].ptr);
                     *target = __NVM_REL_TO_ABS(nvm_run->on[0].value);
-                    clflush(target);
-                    sfence();
+                    PERSIST(target);
                     if (nvm_run->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_run->on[1].ptr);
                         *target = __NVM_REL_TO_ABS(nvm_run->on[1].value);
-                        clflush(target);
-                        sfence();
+                        PERSIST(target);
                     }
                 }
                 nvm_run->bitmap[nvm_run->bit_idx/8] &= ~(1 << (nvm_run->bit_idx % 8));
@@ -732,13 +693,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 if (nvm_run->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_run->on[0].ptr);
                     *target = __NVM_REL_TO_ABS(nvm_run->on[0].value);
-                    clflush(target);
-                    sfence();
+                    PERSIST(target);
                     if (nvm_run->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_run->on[1].ptr);
                         *target = __NVM_REL_TO_ABS(nvm_run->on[1].value);
-                        clflush(target);
-                        sfence();
+                        PERSIST(target);
                     }
                 }
                 nvm_run->bitmap[nvm_run->bit_idx/8] |= 1 << (nvm_run->bit_idx % 8);
@@ -754,8 +713,7 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
             nvm_run->vdata = run;
             nvm_run->bit_idx = -1;
             nvm_run->state = USAGE_RUN | STATE_INITIALIZED;
-            clflush(nvm_run);
-            sfence();
+            PERSIST(nvm_run);
 
         } else {
             /* error case, this should not happen! */
@@ -775,8 +733,7 @@ nvm_huge_header_t* nvm_reserve_huge(uint64_t n_chunks) {
     nvm_huge->state = USAGE_HUGE | STATE_INITIALIZING;
     nvm_huge->n_chunks = n_chunks;
     memset(nvm_huge->on, 0, sizeof(nvm_huge->on));
-    clflush(nvm_huge);
-    sfence();
+    PERSIST(nvm_huge);
 
     return nvm_huge;
 }
@@ -785,8 +742,7 @@ void log_activate(void *ptr) {
     uint64_t slot_index = __sync_fetch_and_add(&next_log_entry, 1);
     uintptr_t *slot = log_start + (slot_index % max_log_entries);
     *slot = __NVM_ABS_TO_REL(ptr);
-    clflush(slot);
-    sfence();
+    PERSIST(slot);
 }
 
 void nvm_teardown() {

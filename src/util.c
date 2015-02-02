@@ -45,12 +45,42 @@ void clflush(const void *ptr) {
 }
 
 void clflush_range(const void *ptr, uint64_t len) {
-    uintptr_t start = (uintptr_t)ptr & ~(0x63);
-    for (; start < (uintptr_t)ptr + len; start += 64) {
+    uintptr_t start = (uintptr_t)ptr & ~(CACHE_LINE_SIZE-1);
+    for (; start < (uintptr_t)ptr + len; start += CACHE_LINE_SIZE) {
         clflush((void*)start);
     }
 }
 
+#ifdef HAS_CLFLUSHOPT
+void clflushopt(const void *ptr) {
+    asm volatile("clflushopt %0" : "+m" (ptr));
+}
+
+void clflushopt_range(const void *ptr, uint64_t len) {
+    uintptr_t start = (uintptr_t)ptr & ~(CACHE_LINE_SIZE-1);
+    for (; start < (uintptr_t)ptr + len; start += CACHE_LINE_SIZE) {
+        clflushopt((void*)start);
+    }
+}
+#endif
+
+#ifdef HAS_CLWB
+void clwb(const void *ptr) {
+    asm volatile("clwb %0" : "+m" (ptr));
+}
+
+void clwb_range(const void *ptr, uint64_t len) {
+    uintptr_t start = (uintptr_t)ptr & ~(CACHE_LINE_SIZE-1);
+    for (; start < (uintptr_t)ptr + len; start += CACHE_LINE_SIZE) {
+        clwb((void*)start);
+    }
+}
+#endif
+
 void sfence() {
     asm volatile("sfence":::"memory");
+}
+
+void mfence() {
+    asm volatile("mfence":::"memory");
 }

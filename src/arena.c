@@ -170,20 +170,20 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
         /* store link pointers in header */
         if (link_ptr1) {
             nvm_block->on[0].ptr = __NVM_ABS_TO_REL(link_ptr1);
-            nvm_block->on[0].value = __NVM_ABS_TO_REL(target1);
+            nvm_block->on[0].value = __NVM_ABS_TO_REL_WITH_NULL(target1);
             if (link_ptr2) {
                 nvm_block->on[1].ptr = __NVM_ABS_TO_REL(link_ptr2);
-                nvm_block->on[1].value = __NVM_ABS_TO_REL(target2);
+                nvm_block->on[1].value = __NVM_ABS_TO_REL_WITH_NULL(target2);
             }
 
             sfence();
             nvm_block->state = USAGE_BLOCK | STATE_FREEING;
             sfence();
 
-            *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
+            *link_ptr1 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target1);
             PERSIST(*link_ptr1);
             if (link_ptr2) {
-                *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
+                *link_ptr2 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target2);
                 PERSIST(*link_ptr2);
             }
         }
@@ -233,20 +233,20 @@ void arena_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, vo
         /* store link pointers in header */
         if (link_ptr1) {
             nvm_run->on[0].ptr = __NVM_ABS_TO_REL(link_ptr1);
-            nvm_run->on[0].value = __NVM_ABS_TO_REL(target1);
+            nvm_run->on[0].value = __NVM_ABS_TO_REL_WITH_NULL(target1);
             if (link_ptr2) {
                 nvm_run->on[1].ptr = __NVM_ABS_TO_REL(link_ptr2);
-                nvm_run->on[1].value = __NVM_ABS_TO_REL(target2);
+                nvm_run->on[1].value = __NVM_ABS_TO_REL_WITH_NULL(target2);
             }
 
             sfence();
             nvm_run->state = USAGE_RUN | STATE_FREEING;
             sfence();
 
-            *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
+            *link_ptr1 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target1);
             PERSIST(*link_ptr1);
             if (link_ptr2) {
-                *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
+                *link_ptr2 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target2);
                 PERSIST(*link_ptr2);
             }
         }

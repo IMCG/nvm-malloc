@@ -19,7 +19,9 @@
 /* --------------------------------------------------------------------------------- */
 
 #define __NVM_ABS_TO_REL(ptr) ((uintptr_t)ptr - (uintptr_t)nvm_start)
+#define __NVM_ABS_TO_REL_WITH_NULL(ptr) ((void*)ptr == NULL ? (uintptr_t)NULL : ((uintptr_t)ptr - (uintptr_t)nvm_start))
 #define __NVM_REL_TO_ABS(ptr) (void*)((uintptr_t)nvm_start + (uintptr_t)ptr)
+#define __NVM_REL_TO_ABS_WITH_NULL(ptr) ((void*)ptr == NULL ? NULL : (void*)((uintptr_t)nvm_start + (uintptr_t)ptr))
 
 
 /* common definitions */

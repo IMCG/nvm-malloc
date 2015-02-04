@@ -197,20 +197,20 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
         /* store link pointers in header */
         if (link_ptr1) {
             nvm_huge->on[0].ptr = __NVM_ABS_TO_REL(link_ptr1);
-            nvm_huge->on[0].value = __NVM_ABS_TO_REL(target1);
+            nvm_huge->on[0].value = __NVM_ABS_TO_REL_WITH_NULL(target1);
             if (link_ptr2) {
                 nvm_huge->on[1].ptr = __NVM_ABS_TO_REL(link_ptr2);
-                nvm_huge->on[1].value = __NVM_ABS_TO_REL(target2);
+                nvm_huge->on[1].value = __NVM_ABS_TO_REL_WITH_NULL(target2);
             }
 
             sfence();
             nvm_huge->state = USAGE_HUGE | STATE_ACTIVATING;
             sfence();
 
-            *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
+            *link_ptr1 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target1);
             PERSIST(*link_ptr1);
             if (link_ptr2) {
-                *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
+                *link_ptr2 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target2);
                 PERSIST(*link_ptr2);
             }
         }
@@ -227,20 +227,20 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
             /* store link pointers in header */
             if (link_ptr1) {
                 nvm_block->on[0].ptr = __NVM_ABS_TO_REL(link_ptr1);
-                nvm_block->on[0].value = __NVM_ABS_TO_REL(target1);
+                nvm_block->on[0].value = __NVM_ABS_TO_REL_WITH_NULL(target1);
                 if (link_ptr2) {
                     nvm_block->on[1].ptr = __NVM_ABS_TO_REL(link_ptr2);
-                    nvm_block->on[1].value = __NVM_ABS_TO_REL(target2);
+                    nvm_block->on[1].value = __NVM_ABS_TO_REL_WITH_NULL(target2);
                 }
 
                 sfence();
                 nvm_block->state = USAGE_BLOCK | STATE_ACTIVATING;
                 sfence();
 
-                *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
+                *link_ptr1 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target1);
                 PERSIST(*link_ptr1);
                 if (link_ptr2) {
-                    *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
+                    *link_ptr2 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target2);
                     PERSIST(*link_ptr2);
                 }
             }
@@ -263,20 +263,20 @@ void nvm_activate(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, 
             /* store link pointers in header */
             if (link_ptr1) {
                 nvm_run->on[0].ptr = __NVM_ABS_TO_REL(link_ptr1);
-                nvm_run->on[0].value = __NVM_ABS_TO_REL(target1);
+                nvm_run->on[0].value = __NVM_ABS_TO_REL_WITH_NULL(target1);
                 if (link_ptr2) {
                     nvm_run->on[1].ptr = __NVM_ABS_TO_REL(link_ptr2);
-                    nvm_run->on[1].value = __NVM_ABS_TO_REL(target2);
+                    nvm_run->on[1].value = __NVM_ABS_TO_REL_WITH_NULL(target2);
                 }
 
                 sfence();
                 nvm_run->state = USAGE_RUN | STATE_ACTIVATING;
                 sfence();
 
-                *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
+                *link_ptr1 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target1);
                 PERSIST(*link_ptr1);
                 if (link_ptr2) {
-                    *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
+                    *link_ptr2 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target2);
                     PERSIST(*link_ptr2);
                 }
             }
@@ -346,20 +346,20 @@ void nvm_free(void *ptr, void **link_ptr1, void *target1, void **link_ptr2, void
         /* store link pointers in header */
         if (link_ptr1) {
             nvm_huge->on[0].ptr = __NVM_ABS_TO_REL(link_ptr1);
-            nvm_huge->on[0].value = __NVM_ABS_TO_REL(target1);
+            nvm_huge->on[0].value = __NVM_ABS_TO_REL_WITH_NULL(target1);
             if (link_ptr2) {
                 nvm_huge->on[1].ptr = __NVM_ABS_TO_REL(link_ptr2);
-                nvm_huge->on[1].value = __NVM_ABS_TO_REL(target2);
+                nvm_huge->on[1].value = __NVM_ABS_TO_REL_WITH_NULL(target2);
             }
 
             sfence();
             nvm_huge->state = USAGE_HUGE | STATE_FREEING;
             sfence();
 
-            *link_ptr1 = (void*) __NVM_ABS_TO_REL(target1);
+            *link_ptr1 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target1);
             PERSIST(*link_ptr1);
             if (link_ptr2) {
-                *link_ptr2 = (void*) __NVM_ABS_TO_REL(target2);
+                *link_ptr2 = (void*) __NVM_ABS_TO_REL_WITH_NULL(target2);
                 PERSIST(*link_ptr2);
             }
         }
@@ -401,12 +401,12 @@ extern void nvm_persist(const void *ptr, uint64_t n_bytes) {
 
 void* nvm_abs(void *rel_ptr) {
     assert(nvm_start != NULL);
-    return (void*) ((uintptr_t)nvm_start + (uintptr_t)rel_ptr);
+    return __NVM_REL_TO_ABS_WITH_NULL(rel_ptr);
 }
 
 void* nvm_rel(void *abs_ptr) {
     assert(nvm_start != NULL);
-    return (void*) ((uintptr_t)abs_ptr - (uintptr_t)nvm_start);
+    return (void*) __NVM_ABS_TO_REL_WITH_NULL(abs_ptr);
 }
 
 /* internal functions */
@@ -568,11 +568,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* committed to freeing, replay */
                 if (nvm_huge->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[0].ptr);
-                    *target = __NVM_REL_TO_ABS(nvm_huge->on[0].value);
+                    *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_huge->on[0].value);
                     PERSIST(target);
                     if (nvm_huge->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[1].ptr);
-                        *target = __NVM_REL_TO_ABS(nvm_huge->on[1].value);
+                        *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_huge->on[1].value);
                         PERSIST(target);
                     }
                 }
@@ -596,11 +596,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* committed to activation, replay */
                 if (nvm_huge->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[0].ptr);
-                    *target = __NVM_REL_TO_ABS(nvm_huge->on[0].value);
+                    *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_huge->on[0].value);
                     PERSIST(target);
                     if (nvm_huge->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_huge->on[1].ptr);
-                        *target = __NVM_REL_TO_ABS(nvm_huge->on[1].value);
+                        *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_huge->on[1].value);
                         PERSIST(target);
                     }
                 }
@@ -623,11 +623,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* committed to freeing, replay */
                 if (nvm_block->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_block->on[0].ptr);
-                    *target = __NVM_REL_TO_ABS(nvm_block->on[0].value);
+                    *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_block->on[0].value);
                     PERSIST(target);
                     if (nvm_block->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_block->on[1].ptr);
-                        *target = __NVM_REL_TO_ABS(nvm_block->on[1].value);
+                        *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_block->on[1].value);
                         PERSIST(target);
                     }
                 }
@@ -653,11 +653,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* committed to activation, replay */
                 if (nvm_block->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_block->on[0].ptr);
-                    *target = __NVM_REL_TO_ABS(nvm_block->on[0].value);
+                    *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_block->on[0].value);
                     PERSIST(target);
                     if (nvm_block->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_block->on[1].ptr);
-                        *target = __NVM_REL_TO_ABS(nvm_block->on[1].value);
+                        *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_block->on[1].value);
                         PERSIST(target);
                     }
                 }
@@ -677,11 +677,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* committed to freeing, replay */
                 if (nvm_run->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_run->on[0].ptr);
-                    *target = __NVM_REL_TO_ABS(nvm_run->on[0].value);
+                    *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_run->on[0].value);
                     PERSIST(target);
                     if (nvm_run->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_run->on[1].ptr);
-                        *target = __NVM_REL_TO_ABS(nvm_run->on[1].value);
+                        *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_run->on[1].value);
                         PERSIST(target);
                     }
                 }
@@ -692,11 +692,11 @@ void nvm_initialize_recovered(uint64_t n_chunks_recovered) {
                 /* committed to activation, replay */
                 if (nvm_run->on[0].ptr) {
                     target = (void**)__NVM_REL_TO_ABS(nvm_run->on[0].ptr);
-                    *target = __NVM_REL_TO_ABS(nvm_run->on[0].value);
+                    *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_run->on[0].value);
                     PERSIST(target);
                     if (nvm_run->on[1].ptr) {
                         target = (void**)__NVM_REL_TO_ABS(nvm_run->on[1].ptr);
-                        *target = __NVM_REL_TO_ABS(nvm_run->on[1].value);
+                        *target = __NVM_REL_TO_ABS_WITH_NULL(nvm_run->on[1].value);
                         PERSIST(target);
                     }
                 }

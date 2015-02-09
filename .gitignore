@@ -4,3 +4,5 @@
 *.a
 *.test
 objects/
+benchmark/build
+

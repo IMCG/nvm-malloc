@@ -13,4 +13,6 @@ uint64_t recover_chunks();
 
 void* activate_more_chunks(uint64_t n_chunks);
 
+void teardown_nvm_space();
+
 #endif /* CHUNK_H_ */

@@ -19,7 +19,9 @@
 /* --------------------------------------------------------------------------------- */
 
 #define __NVM_ABS_TO_REL(ptr) ((uintptr_t)ptr - (uintptr_t)nvm_start)
+#define __NVM_ABS_TO_REL_WITH_NULL(ptr) ((void*)ptr == NULL ? (uintptr_t)NULL : ((uintptr_t)ptr - (uintptr_t)nvm_start))
 #define __NVM_REL_TO_ABS(ptr) (void*)((uintptr_t)nvm_start + (uintptr_t)ptr)
+#define __NVM_REL_TO_ABS_WITH_NULL(ptr) ((void*)ptr == NULL ? NULL : (void*)((uintptr_t)nvm_start + (uintptr_t)ptr))
 
 
 /* common definitions */
@@ -47,8 +49,10 @@
 #define STATE_NONE         ((char)0)
 #define STATE_INITIALIZING ((char)1)
 #define STATE_INITIALIZED  ((char)2)
-#define STATE_FREEING      ((char)3)
-#define STATE_ACTIVATING   ((char)4)
+#define STATE_PREFREE      ((char)4)
+#define STATE_FREEING      ((char)5)
+#define STATE_PREACTIVATE  ((char)6)
+#define STATE_ACTIVATING   ((char)7)
 
 #define USAGE_MASK         (~STATE_MASK)
 #define GET_USAGE(state)   (state & USAGE_MASK)
@@ -92,8 +96,7 @@ struct nvm_object_table_entry_s {
 
 struct nvm_chunk_header_s {
     char state;
-    char signature[47];
-    uintptr_t next_arena_chunk;
+    char signature[55];
     uintptr_t next_ot_chunk;
     nvm_object_table_entry_t object_table[63];
 } __attribute__((aligned(BLOCK_SIZE)));
@@ -106,7 +109,6 @@ struct nvm_ptrset_s {
 struct nvm_huge_header_s {
     char state;
     uint32_t n_chunks;
-    huge_t *vdata;
     nvm_ptrset_t on[2];
     char __padding[12];
 } __attribute__((aligned(CACHE_LINE_SIZE)));
@@ -114,19 +116,20 @@ struct nvm_huge_header_s {
 struct nvm_block_header_s {
     char state;
     uint32_t n_pages;
-    arena_block_t *vdata;
     nvm_ptrset_t on[2];
-    char __padding[16];
+    uint32_t arena_id;
+    char __padding[12];
 } __attribute__((aligned(CACHE_LINE_SIZE)));
 
 struct nvm_run_header_s {
     char state;
-    uint32_t n_bytes;
+    uint16_t n_bytes;
     arena_run_t *vdata;
     nvm_ptrset_t on[2];
     char bitmap[8];
     int16_t bit_idx;
-    char __padding[6];
+    uint16_t arena_id;
+    uint32_t version;
 } __attribute__((aligned(CACHE_LINE_SIZE)));
 
 
@@ -174,8 +177,6 @@ struct arena_bin_s {
 
 struct arena_s {
     uint32_t id;
-    uint16_t n_chunks;
-    nvm_chunk_header_t **chunk_ptrs;
     arena_bin_t bins[31];
     node_t *free_pageruns;
     pthread_mutex_t mtx;

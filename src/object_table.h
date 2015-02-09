@@ -11,12 +11,14 @@
 
 void ot_init(void *nvm_start);
 
-void ot_recover();
+void ot_recover(void *nvm_start);
 
 int ot_insert(const char *id, void *data_ptr);
 
 object_table_entry_t* ot_get(const char *id);
 
 int ot_remove(const char *id);
+
+void ot_teardown();
 
 #endif /* OBJECT_TABLE_H_ */

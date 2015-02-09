@@ -2,6 +2,8 @@
 
 #include "object_table.h"
 
+#include "util.h"
+
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
@@ -70,7 +72,7 @@ void ot_init(void *nvm_start) {
     }
 }
 
-void ot_recover() {
+void ot_recover(void *nvm_start) {
     int i=0;
     uint16_t n;
     uint64_t current_slot = 0;
@@ -78,17 +80,70 @@ void ot_recover() {
     nvm_chunk_header_t *chunk_hdr = (nvm_chunk_header_t*) first_chunk;
     nvm_object_table_entry_t *nvm_entry = NULL;
     object_table_entry_t *entry = NULL;
+    nvm_huge_header_t *nvm_huge = NULL;
+    nvm_block_header_t *nvm_block = NULL;
+    nvm_run_header_t *nvm_run = NULL;
+    uint16_t bit_idx = 0;
+    uint8_t bitmap_idx = 0;
+    char bitmask = 0;
+    char state = -1;
+    int keep = 0;
+    void *ptr = NULL;
 
     while (1) {
-        //nvm_entry = chunk_hdr->object_table;
         for (i=0; i<63; ++i) {
+            keep = 0;
             nvm_entry = &chunk_hdr->object_table[i];
             if (nvm_entry->state == STATE_INITIALIZED) {
+                /* entry is marked as initialized, so we can keep it */
+                keep = 1;
+            } else if (nvm_entry->state == STATE_INITIALIZING) {
+                /* crash occurred during activation but after writing the entry, check corresponding header */
+                /* if header is in state PREFREE, ACTIVATING or INITIALIZED, it is/will be recovered and the entry can persist */
+                ptr = (void*) ((uintptr_t)nvm_start + nvm_entry->ptr);
+                state = identify_usage(ptr);
+                if (state == USAGE_HUGE) {
+                    nvm_huge = (nvm_huge_header_t*) ((uintptr_t)ptr - sizeof(nvm_huge_header_t));
+                    if (nvm_huge->state == STATE_PREFREE ||
+                        nvm_huge->state == STATE_ACTIVATING ||
+                        nvm_huge->state == STATE_INITIALIZED) {
+                        keep = 1;
+                    }
+                } else if (state == USAGE_BLOCK) {
+                    nvm_block = (nvm_block_header_t*) ((uintptr_t)ptr - sizeof(nvm_block_header_t));
+                    if (nvm_block->state == STATE_PREFREE ||
+                        nvm_block->state == STATE_ACTIVATING ||
+                        nvm_block->state == STATE_INITIALIZED) {
+                        keep = 1;
+                    }
+                } else if (state == USAGE_RUN) {
+                    /* for runs, we also need to check that the bit index is the correct one */
+                    nvm_run = (nvm_run_header_t*) ((uintptr_t)ptr & ~(BLOCK_SIZE-1));
+                    bit_idx = ((uintptr_t)ptr - (uintptr_t)(nvm_run+1)) / nvm_run->n_bytes;
+                    bitmask = 1 << (bit_idx % 8);
+                    bitmap_idx = bit_idx / 8;
+                    if ((nvm_run->state == STATE_PREFREE && (nvm_run->bitmap[bitmap_idx] & bitmask) != 0) ||
+                        (nvm_run->state == STATE_ACTIVATING && nvm_run->bit_idx == bit_idx) ||
+                        (nvm_run->state == STATE_INITIALIZED && (nvm_run->bitmap[bitmap_idx] & bitmask) != 0)) {
+                        keep = 1;
+                    }
+                }
+                if (keep) {
+                    nvm_entry->state = STATE_INITIALIZED;
+                } else {
+                    memset(nvm_entry, 0, sizeof(nvm_object_table_entry_t));
+                }
+                PERSIST(nvm_entry);
+            }
+
+            if (keep) {
+                /* if we keep the entry, create its volatile counterpart */
                 entry = malloc(sizeof(object_table_entry_t));
                 memcpy(entry->id, nvm_entry->id, MAX_ID_LENGTH);
                 entry->slot = current_slot;
                 entry->data_ptr = NVM_REL_TO_ABS(first_chunk, nvm_entry->ptr);
                 entry->nvm_entry = nvm_entry;
+                /* add the unused slots we found since the last valid entry to the slot buffer */
                 for (n=last_used_slot+1; n<current_slot; ++n) {
                     slot_buffer[slot_buffer_next_idx++] = n;
                     ++slot_buffer_tail_idx;
@@ -175,4 +230,29 @@ int ot_remove(const char *id) {
     } else {
         return OT_FAIL;
     }
+}
+
+void ot_teardown() {
+    chainhash_itr_t(ot) it;
+    object_table_entry_t *value = NULL;
+
+    /* delete object table hashmap */
+    for (it = chainhash_begin(ot, ot_hashmap); !chainhash_end(it); ) {
+        /* no need to free key, just a pointer to the value's id field */
+        value = chainhash_value(ot, it);
+        free(value);
+        if (chainhash_advance(ot, &it))
+            break;
+    }
+    chainhash_destroy(ot, ot_hashmap);
+    ot_hashmap = NULL;
+    total_slots_available = 0;
+    next_nvm_slot = 0;
+    first_chunk = NULL;
+
+    /* cleanup slot buffer */
+    slot_buffer_next_idx = 0;
+    slot_buffer_head_idx = 0;
+    slot_buffer_tail_idx = -1;
+    slot_buffer_n_free = 0;
 }

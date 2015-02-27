@@ -27,18 +27,22 @@ inline void sfence();
 inline void mfence();
 
 /* macros for persistency depending on instruction availability */
-#ifdef HAS_CLWB
+#ifdef NOFLUSH
+    /* Completely disable flushes */
+    #define PERSIST(ptr)            do { } while (0)
+    #define PERSIST_RANGE(ptr, len) do { } while (0)
+#elif HAS_CLWB
     /* CLWB is the preferred instruction, not invalidating any cache lines */
-    #define PERSIST(ptr) sfence(); clwb(ptr); sfence()
-    #define PERSIST_RANGE(ptr, len) sfence(); clwb_range(ptr, len); sfence()
+    #define PERSIST(ptr)            do { sfence(); clwb(ptr); sfence(); } while (0)
+    #define PERSIST_RANGE(ptr, len) do { sfence(); clwb_range(ptr, len); sfence(); } while (0)
 #elif HAS_CLFLUSHOPT
     /* CLFLUSHOPT is preferred over CLFLUSH as only dirty cache lines will be evicted */
-    #define PERSIST(ptr) sfence(); clflushopt(ptr); sfence()
-    #define PERSIST_RANGE(ptr, len) sfence(); clflushopt_range(ptr, len); sfence()
+    #define PERSIST(ptr)            do { sfence(); clflushopt(ptr); sfence(); } while (0)
+    #define PERSIST_RANGE(ptr, len) do { sfence(); clflushopt_range(ptr, len); sfence(); } while (0)
 #else
     /* If neither CLWB nor CLFLUSHOPT are available, default to CLFLUSH */
-    #define PERSIST(ptr) mfence(); clflush(ptr); mfence()
-    #define PERSIST_RANGE(ptr, len) mfence(); clflush_range(ptr, len); mfence()
+    #define PERSIST(ptr)            do { mfence(); clflush(ptr); mfence(); } while (0)
+    #define PERSIST_RANGE(ptr, len) do { mfence(); clflush_range(ptr, len); mfence(); } while (0)
 #endif
 
 #endif /* UTIL_H_ */

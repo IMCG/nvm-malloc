@@ -163,6 +163,36 @@ while (current_node != NULL) {
 }
 ```
 
+# Benchmarks
+
+In order to run the benchmarks for nvm_malloc, build both the library and benchmark binaries and execute the Python script:
+
+    $ make release
+    $ cd benchmark
+    $ make release
+    $ python run_benchmarks.py <args>
+
+The Python script will create plots in ./benchmark/plots and accepts the following arguments:
+
+```
+-h, --help                 show this help message and exit
+--run-all                  run and plot all benchmarks
+--run-alloc-free           run and plot the alloc-free benchmark
+--run-alloc-free-alloc     run and plot the alloc-free-alloc benchmark
+--run-fastalloc            run and plot the fastalloc benchmark
+--run-linkedlist           run and plot the linked list benchmark
+--run-recovery             run and plot the recovery benchmark
+--threads-min THREADS_MIN  run benchmarks for at least THREADS_MIN threads (default: 1)
+--threads-max THREADS_MAX  run benchmarks for at most THREADS_MAX threads (default: 20)
+--payload-min PAYLOAD_MIN  allocate at least PAYLOAD_MIN bytes per allocation (default: 64)
+--payload-max PAYLOAD_MAX  allocate at most PAYLOAD_MAX bytes per allocation (default: 64, must be >= PAYLOAD_MIN)
+--with-jemalloc            include jemalloc in the benchmarks
+--with-nofence             include a run with fences disabled
+--with-noflush             include a run with flushes disabled
+--with-none                include a run with both fences and flushes disabled
+--ignore-cached            overwrite cached benchmark results for given parameters (if any)
+```
+
 # Original Author
 
 Tim Berning (tim.berning@gmail.com)

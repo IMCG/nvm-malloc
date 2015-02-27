@@ -32,7 +32,7 @@ def getCacheFileName(binary, args, with_jemalloc):
                                                                       "true" if with_jemalloc else "false"))
 
 def runBenchmarkBinary(binary, parameters, with_jemalloc, miliseconds=False):
-    procString = os.path.join(os.getcwd(), "build", binary) + " " + " ".join([str(p) for p in parameters])
+    procString = "hwloc-bind node:1 " + os.path.join(os.getcwd(), "build", binary) + " " + " ".join([str(p) for p in parameters])
     if with_jemalloc:
         procString = "LD_PRELOAD=%s %s" % (JEMALLOC_PATH, procString)
     env = {"LD_LIBRARY_PATH": os.path.join(os.getcwd(), "..")}
@@ -73,26 +73,41 @@ def plotBenchmark(benchname, args):
 
     # default allocator
     print "Running '%s' for default malloc" % benchname
-    plt.plot(plotX, runBenchmark("bench_%s" % benchname, args), label="default malloc")
+    plt.plot(plotX, runBenchmark("bench_%s" % benchname, args), label="default malloc", ls="--", color="black")
 
     # if selected, run with jemalloc
     if args["with_jemalloc"]:
         print "Running '%s' for jemalloc" % benchname
-        plt.plot(plotX, runBenchmark("bench_%s" % benchname, args, True), label="jemalloc")
+        plt.plot(plotX, runBenchmark("bench_%s" % benchname, args, True), label="jemalloc", ls=":", color="black")
 
     # run standard nvm_malloc
     print "Running '%s' for nvm_malloc" % benchname
-    plt.plot(plotX, runBenchmark("bench_%s_nvm" % benchname, args), label="nvm\_malloc")
+    plt.plot(plotX, runBenchmark("bench_%s_nvm" % benchname, args), label="nvm\_malloc", ls="-", marker="o", color="black")
 
     # if selected, run nvm_malloc with CLFLUSHOPT
     if args["has_clflushopt"]:
         print "Running '%s' for nvm_malloc with CLFLUSHOPT" % benchname
-        plt.plot(plotX, runBenchmark("bench_%s_nvm_clflushopt" % benchname, args), label="nvm\_malloc with CLFLUSHOPT")
+        plt.plot(plotX, runBenchmark("bench_%s_nvm_clflushopt" % benchname, args), label="nvm\_malloc with CLFLUSHOPT", ls="-", marker="s", color="black")
 
     # if selected, run nvm_malloc with CLWB
     if args["has_clwb"]:
         print "Running '%s' for nvm_malloc with CLWB" % benchname
-        plt.plot(plotX, runBenchmark("bench_%s_nvm_clwb" % benchname, args), label="nvm\_malloc with CLWB")
+        plt.plot(plotX, runBenchmark("bench_%s_nvm_clwb" % benchname, args), label="nvm\_malloc with CLWB", ls="-", marker="v", color="black")
+
+    # if selected, run nvm_malloc with fences disables
+    if args["with_nofence"]:
+        print "Running '%s' for nvm_malloc without fences" % benchname
+        plt.plot(plotX, runBenchmark("bench_%s_nvm_nofence" % benchname, args), label="nvm\_malloc no fences", ls="-", marker="^", color="black")
+
+    # if selected, run nvm_malloc with flushes disabled
+    if args["with_noflush"]:
+        print "Running '%s' for nvm_malloc without flushes" % benchname
+        plt.plot(plotX, runBenchmark("bench_%s_nvm_noflush" % benchname, args), label="nvm\_malloc no flushes", ls="-", marker="+", color="black")
+
+    # if selected, run nvm_malloc with both fences and flushes disabled
+    if args["with_none"]:
+        print "Running '%s' for nvm_malloc without flushes or fences" % benchname
+        plt.plot(plotX, runBenchmark("bench_%s_nvm_none" % benchname, args), label="nvm\_malloc no fences/flushes", ls="-", marker="x", color="black")
 
     plt.legend(loc='upper left', prop={'size':10})
     plt.savefig(os.path.join(os.getcwd(), "plots", "%s.pdf" % benchname), dpi=1000, bbox_inches="tight")
@@ -108,7 +123,7 @@ def plotRecoveryBenchmark(args):
     plt.xlim(1, maxIterations)
     plotX = arange(1, maxIterations+1)
     print "Running 'recovery' for nvm_malloc"
-    plt.plot(plotX, runRecovery(maxIterations, args))
+    plt.plot(plotX, runRecovery(maxIterations, args), color="black", ls="-")
     #plt.legend(loc='upper left', prop={'size':10})
     plt.savefig(os.path.join(os.getcwd(), "plots", "recovery.pdf"), dpi=1000, bbox_inches="tight")
     plt.close()
@@ -122,12 +137,15 @@ if __name__ == "__main__":
     parser.add_argument("--run-linkedlist", action="store_true")
     parser.add_argument("--run-recovery", action="store_true")
     parser.add_argument("--threads-min", type=int, default=1)
-    parser.add_argument("--threads-max", type=int, default=20)
+    parser.add_argument("--threads-max", type=int, default=10)
     parser.add_argument("--payload-min", type=int, default=64)
     parser.add_argument("--payload-max", type=int, default=64)
     parser.add_argument("--has-clflushopt", action="store_true")
     parser.add_argument("--has-clwb", action="store_true")
-    parser.add_argument("--with-jemalloc", action="store_true")
+    parser.add_argument("--with-jemalloc", action="store_true", help="include a run with jemalloc in the benchmark")
+    parser.add_argument("--with-nofence", action="store_true", help="include a run with disabled fences")
+    parser.add_argument("--with-noflush", action="store_true", help="include a run with disabled flushes")
+    parser.add_argument("--with-none", action="store_true", help="include a run with disabled fences and flushes")
     parser.add_argument("--ignore-cached", action="store_true")
     args = vars(parser.parse_args())
     if args["payload_max"] < args["payload_min"]:

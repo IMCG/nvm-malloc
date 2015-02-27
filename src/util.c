@@ -78,9 +78,13 @@ void clwb_range(const void *ptr, uint64_t len) {
 #endif
 
 void sfence() {
+#ifndef NOFENCE
     asm volatile("sfence":::"memory");
+#endif
 }
 
 void mfence() {
+#ifndef NOFENCE
     asm volatile("mfence":::"memory");
+#endif
 }

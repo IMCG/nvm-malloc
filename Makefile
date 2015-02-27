@@ -8,12 +8,21 @@ OBJDIR := objects
 OBJECTS := util.o chunk.o object_table.o arena.o nvm_malloc.o
 LIBNAME := libnvmmalloc.so
 
-release: $(LIBNAME)
+release: $(LIBNAME) libnvmmallocnoflush.so libnvmmallocnofence.so libnvmmallocnone.so
 
 debug: $(LIBNAME)
 
 $(LIBNAME): ulib-svn/lib/libulib.a $(addprefix $(OBJDIR)/, $(OBJECTS))
 	$(CC) $(CFLAGS) -shared -o $@ $(LDFLAGS) $(addprefix $(OBJDIR)/, $(OBJECTS)) ulib-svn/lib/libulib.a
+
+libnvmmallocnoflush.so: $(SRCDIR)/*.c ulib-svn/lib/libulib.a
+	$(CC) $(CFLAGS) -shared -o $@ $(LDFLAGS) -DNOFLUSH $+ ulib-svn/lib/libulib.a
+
+libnvmmallocnofence.so: $(SRCDIR)/*.c ulib-svn/lib/libulib.a
+	$(CC) $(CFLAGS) -shared -o $@ $(LDFLAGS) -DNOFENCE $+ ulib-svn/lib/libulib.a
+
+libnvmmallocnone.so: $(SRCDIR)/*.c ulib-svn/lib/libulib.a
+	$(CC) $(CFLAGS) -shared -o $@ $(LDFLAGS) -DNOFLUSH -DNOFENCE $+ ulib-svn/lib/libulib.a
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c $(SRCDIR)/*.h
 	@mkdir -p $(OBJDIR)
